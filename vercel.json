@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": [
+    "hnd1"
+  ],
+  "crons": [
+    { "path": "/api/cron/silom-sync?shop=sathorn", "schedule": "55 16 * * *" },
+    { "path": "/api/cron/silom-sync?shop=sukhumvit", "schedule": "57 16 * * *" }
+  ]
+}

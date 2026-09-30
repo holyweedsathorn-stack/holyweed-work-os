@@ -1,0 +1,16 @@
+{
+  "name": "Holyweed Work OS",
+  "short_name": "Holyweed",
+  "description": "Team, schedules, shop dashboards and projects for Holyweed Group.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F3EE",
+  "theme_color": "#237A4A",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

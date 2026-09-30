@@ -1,0 +1,177 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f5f3ee;
+  --surface: #ffffff;
+  --surface-2: #ece8db;
+  --surface-hover: #f1eee3;
+  --ink: #1e2320;
+  --ink-secondary: #4b5049;
+  /* 5.1:1 on --surface. The old #7c8177 was ~4.0:1 and missed WCAG AA
+     for the caption and uppercase-label text it is used for. */
+  --ink-muted: #6b7066;
+  --line: #e1ddce;
+  --line-strong: #d0caba;
+
+  --accent: #237a4a;
+  --accent-ink: #ffffff;
+  --accent-soft: #e1efe6;
+  --accent2: #c77f3b;
+  --accent2-soft: #f6e8d8;
+
+  --sathorn: #237a4a;
+  --sathorn-soft: #e1efe6;
+  --sukhumvit: #3d6fb4;
+  --sukhumvit-soft: #e3eaf6;
+
+  --good: #0f8b8d;
+  --good-soft: #dff0ef;
+  --warning: #a8781c;
+  --warning-soft: #f6ecd7;
+  --critical: #b23b2e;
+  --critical-soft: #f7e1dd;
+
+  --shadow-card: 0 1px 2px rgba(30, 35, 32, 0.05), 0 1px 1px rgba(30, 35, 32, 0.04);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141813;
+    --surface: #1b201a;
+    --surface-2: #222720;
+    --surface-hover: #262c24;
+    --ink: #ecebe2;
+    --ink-secondary: #c2c6b9;
+    --ink-muted: #8b9084;
+    --line: #2b3128;
+    --line-strong: #3a4136;
+    --accent: #4fae76;
+    --accent-ink: #0a1310;
+    --accent-soft: rgba(79, 174, 118, 0.16);
+    --accent2: #e0a360;
+    --accent2-soft: rgba(224, 163, 96, 0.16);
+    --sathorn: #3e9463;
+    --sathorn-soft: rgba(62, 148, 99, 0.18);
+    --sukhumvit: #5c8fdb;
+    --sukhumvit-soft: rgba(92, 143, 219, 0.18);
+    --good: #2fb4b6;
+    --good-soft: rgba(47, 180, 182, 0.16);
+    --warning: #d9ae4e;
+    --warning-soft: rgba(217, 174, 78, 0.16);
+    --critical: #dd6b5e;
+    --critical-soft: rgba(221, 107, 94, 0.16);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141813;
+  --surface: #1b201a;
+  --surface-2: #222720;
+  --surface-hover: #262c24;
+  --ink: #ecebe2;
+  --ink-secondary: #c2c6b9;
+  --ink-muted: #8b9084;
+  --line: #2b3128;
+  --line-strong: #3a4136;
+  --accent: #4fae76;
+  --accent-ink: #0a1310;
+  --accent-soft: rgba(79, 174, 118, 0.16);
+  --accent2: #e0a360;
+  --accent2-soft: rgba(224, 163, 96, 0.16);
+  --sathorn: #3e9463;
+  --sathorn-soft: rgba(62, 148, 99, 0.18);
+  --sukhumvit: #5c8fdb;
+  --sukhumvit-soft: rgba(92, 143, 219, 0.18);
+  --good: #2fb4b6;
+  --good-soft: rgba(47, 180, 182, 0.16);
+  --warning: #d9ae4e;
+  --warning-soft: rgba(217, 174, 78, 0.16);
+  --critical: #dd6b5e;
+  --critical-soft: rgba(221, 107, 94, 0.16);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+h1, h2, h3 { text-wrap: balance; }
+.num { font-variant-numeric: tabular-nums; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  padding: 18px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Print — the monthly report needs to come out as a clean PDF to send on.
+   Anything that only makes sense on screen (sidebar, buttons, inputs) drops
+   out; anything marked print-only takes its place.
+   --------------------------------------------------------------------------- */
+.print-only { display: none; }
+
+@media print {
+  @page { margin: 14mm; size: A4 portrait; }
+
+  aside,
+  .no-print { display: none !important; }
+
+  .print-only { display: revert; }
+
+  html, body { height: auto; background: #fff; color: #000; }
+
+  /* The app scrolls inside a fixed-height pane; printing needs it to flow. */
+  .print-page,
+  .print-page * { overflow: visible !important; }
+  .print-page { padding: 0 !important; }
+
+  .card {
+    box-shadow: none;
+    border: 1px solid #ccc;
+    break-inside: avoid;
+    padding: 10px 12px;
+  }
+
+  h3 { break-after: avoid; }
+  table { break-inside: auto; }
+  tr { break-inside: avoid; }
+}
+
+/* ---------------------------------------------------------------------------
+   Loading skeletons.
+
+   Every page in (app) is force-dynamic, so a tap means a server round trip.
+   Without a loading state the screen simply freezes on the old page, which
+   reads as "the app is slow" even when the request is quick. A skeleton
+   appears instantly and also lets Next prefetch the route boundary.
+   --------------------------------------------------------------------------- */
+.skeleton {
+  background: var(--surface-2);
+  border-radius: 9px;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}

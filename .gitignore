@@ -1,0 +1,26 @@
+# dependencies
+node_modules
+
+# next.js build output
+.next
+out
+
+# vercel
+.vercel
+
+# env files -- real secrets (Supabase keys, cron secret, Silom logins) live
+# only in .env.local and in Vercel's own env settings, never in git
+.env*
+!.env.example
+!env.example
+
+# editor / OS
+.DS_Store
+
+# build/type-check caches -- regenerated automatically, noisy in diffs
+next-env.d.ts
+tsconfig.tsbuildinfo
+npm-debug.log*
+
+# ad-hoc manual backups made while editing -- not real history now that git exists
+.backup-pre-0012
