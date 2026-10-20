@@ -123,18 +123,43 @@ function MultiPhotoField({
  * clock screen — but this holds guest ID photos, so it stays deliberately
  * minimal: nothing extra collected beyond what's needed to run the desk.
  */
-export function HostelCheckinForm() {
+export type CheckinPrefill = {
+  pmsBookingId: string;
+  pmsRef: string;
+  unitLabel: string;
+  guestName: string;
+  roomNumber: string; // "" when the PMS unit doesn't match a room in HOSTEL_ROOMS
+  bedNumber: string;
+  expectedCheckoutDate: string;
+  bookingSource: BookingSource | "";
+  paymentMethod: PaymentMethod;
+};
+
+/**
+ * With `prefill` (a PMS arrival picked on the clock screen) the form opens
+ * filled in from the booking and checks the booking in on the PMS too;
+ * staff still add the photos and confirm room and payment.
+ */
+export function HostelCheckinForm({
+  prefill,
+  onDone,
+  onCancel,
+}: {
+  prefill?: CheckinPrefill | null;
+  onDone?: () => void;
+  onCancel?: () => void;
+} = {}) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const passportRef = useRef<HTMLInputElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
 
   const [working, start] = useTransition();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!prefill);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [roomNumber, setRoomNumber] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [roomNumber, setRoomNumber] = useState(prefill?.roomNumber ?? "");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(prefill?.paymentMethod ?? "cash");
   const [amountThb, setAmountThb] = useState("");
   const [passportPreviews, setPassportPreviews] = useState<string[]>([]);
   const [keyPreview, setKeyPreview] = useState<string | null>(null);
@@ -193,13 +218,16 @@ export function HostelCheckinForm() {
       setSent(true);
       setOpen(false);
       router.refresh();
+      onDone?.();
     });
   }
 
   return (
     <div className="card">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="font-display text-[15px] font-semibold">Guest check-in</h2>
+        <h2 className="font-display text-[15px] font-semibold">
+          {prefill && open ? `Check in PMS #${prefill.pmsRef}` : "Guest check-in"}
+        </h2>
         {!open && (
           <button
             type="button"
@@ -237,11 +265,20 @@ export function HostelCheckinForm() {
         <form ref={formRef} action={submit} className="flex flex-col gap-3">
           <input type="hidden" name="payment_method" value={paymentMethod} />
           <input type="hidden" name="amount_thb" value={amountThb} />
+          {prefill && <input type="hidden" name="pms_booking_id" value={prefill.pmsBookingId} />}
+          {prefill && (
+            <div className="text-[12.5px] rounded-[9px] px-3 py-2" style={{ background: "var(--surface-2)" }}>
+              PMS: <span className="font-semibold">{prefill.unitLabel}</span>
+              {prefill.roomNumber ? "" : " · choose the matching room below"}. Submitting also checks this
+              booking in on the PMS.
+            </div>
+          )}
 
           <label className="text-[12px] font-semibold text-inkSecondary block">
             Guest name (optional)
             <input
               name="guest_name"
+              defaultValue={prefill?.guestName}
               maxLength={200}
               placeholder="e.g. Somchai Jaidee"
               className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
@@ -277,7 +314,7 @@ export function HostelCheckinForm() {
                   key={roomNumber}
                   name="bed_number"
                   required
-                  defaultValue=""
+                  defaultValue={prefill && roomNumber === prefill.roomNumber ? prefill.bedNumber : ""}
                   className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
                   style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}
                 >
@@ -299,6 +336,7 @@ export function HostelCheckinForm() {
             <input
               name="expected_checkout_date"
               type="date"
+              defaultValue={prefill?.expectedCheckoutDate}
               className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}
             />
@@ -309,7 +347,7 @@ export function HostelCheckinForm() {
             <select
               name="booking_source"
               required
-              defaultValue=""
+              defaultValue={prefill?.bookingSource ?? ""}
               className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}
             >
@@ -407,6 +445,7 @@ export function HostelCheckinForm() {
               onClick={() => {
                 reset();
                 setOpen(false);
+                onCancel?.();
               }}
               className="rounded-[11px] border px-5 text-[14px] font-semibold text-inkSecondary"
               style={{ borderColor: "var(--line-strong)", minHeight: 50 }}

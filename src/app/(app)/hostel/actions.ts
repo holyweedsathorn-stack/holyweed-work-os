@@ -28,6 +28,8 @@ export type HostelStay = {
   checkedOutEmployeeName: string | null;
   passportPhotoUrls: string[];
   roomKeyPhotoUrl: string | null;
+  pmsRef: string | null;
+  pmsSyncError: string | null;
   extensions: HostelStayExtension[];
 };
 
@@ -81,7 +83,7 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
     admin
       .from("hostel_stays")
       .select(
-        "id, guest_name, branch_id, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name"
+        "id, guest_name, branch_id, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_ref, pms_sync_error"
       )
       .eq("org_id", guard.orgId)
       .order("checked_in_at", { ascending: false })
@@ -125,6 +127,8 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
       passportPhotoUrls: passportPaths,
       roomKeyPhotoUrl: (r.room_key_photo_path as string | null) ?? null,
       extensions: extensionsByStay.get(r.id as string) ?? [],
+      pmsRef: r.pms_ref as string | null,
+      pmsSyncError: r.pms_sync_error as string | null,
     };
   });
 }

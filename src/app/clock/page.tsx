@@ -5,7 +5,7 @@ import { StaffTasks, type ChecklistItem, type OneOffTask, type MyProject } from 
 import { RequestForm } from "@/components/RequestForm";
 import { ReceivedItemForm } from "@/components/ReceivedItemForm";
 import { ReceivedItemsFeed } from "@/components/ReceivedItemsFeed";
-import { HostelCheckinForm } from "@/components/HostelCheckinForm";
+import { PmsFrontDesk } from "@/components/PmsFrontDesk";
 import { HostelStaysFeed } from "@/components/HostelStaysFeed";
 import { BistroSalesForm } from "@/components/BistroSalesForm";
 import { BistroSalesFeed } from "@/components/BistroSalesFeed";
@@ -265,7 +265,7 @@ export default async function ClockPage() {
         </CollapsibleSection>
 
         <CollapsibleSection title="Hostel" subtitle="Guest check-in & log">
-          <HostelCheckinForm />
+          <PmsFrontDesk />
           <HostelStaysFeed />
         </CollapsibleSection>
 
