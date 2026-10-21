@@ -47,6 +47,11 @@ export type PmsErrorCode =
   | "early_departure"
   | "balance_due"
   | "month_closed"
+  | "room_taken"
+  | "duplicate_guest"
+  | "no_unit"
+  | "ambiguous_unit"
+  | "bad_request"
   | "pms_error";
 
 export type PmsResult<T> = ({ ok: true } & T) | { ok: false; code: PmsErrorCode; message: string; balance?: number };
@@ -100,4 +105,28 @@ export function pmsSetStatus(input: {
   allowBalance?: boolean;
 }): Promise<PmsResult<{ already?: boolean; booking: PmsBooking }>> {
   return call("/api/workos/booking-status", { method: "POST", body: JSON.stringify(input) });
+}
+
+/**
+ * A guest checked in here by hand: the PMS checks in the booking it
+ * already has for them (same OTA number, or same name arriving now), or
+ * creates one, already checked in. Keyed by the Work OS stay id, so
+ * sending the same stay again never creates a second booking. Refuses
+ * with "room_taken" when that room/bed is booked in the PMS.
+ */
+export function pmsWalkIn(input: {
+  stayId: string;
+  guestName: string | null;
+  roomNumber: string;
+  bedNumber: string | null;
+  checkIn: string;
+  checkOut: string | null;
+  bookingSource: string;
+  paymentMethod: string;
+  amountThb: number | null;
+  otaRef?: string | null;
+  notes: string | null;
+  staffName: string;
+}): Promise<PmsResult<{ created?: boolean; linked?: boolean; already?: boolean; booking: PmsBooking }>> {
+  return call("/api/workos/walk-in", { method: "POST", body: JSON.stringify(input) });
 }

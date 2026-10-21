@@ -161,6 +161,7 @@ export function HostelCheckinForm({
   const [roomNumber, setRoomNumber] = useState(prefill?.roomNumber ?? "");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(prefill?.paymentMethod ?? "cash");
   const [amountThb, setAmountThb] = useState("");
+  const [bookingSource, setBookingSource] = useState<string>(prefill?.bookingSource ?? "");
   const [passportPreviews, setPassportPreviews] = useState<string[]>([]);
   const [keyPreview, setKeyPreview] = useState<string | null>(null);
 
@@ -185,6 +186,7 @@ export function HostelCheckinForm({
     setRoomNumber("");
     setPaymentMethod("cash");
     setAmountThb("");
+    setBookingSource("");
     previewMany(null, setPassportPreviews);
     preview(undefined, setKeyPreview);
   }
@@ -347,7 +349,8 @@ export function HostelCheckinForm({
             <select
               name="booking_source"
               required
-              defaultValue={prefill?.bookingSource ?? ""}
+              value={bookingSource}
+              onChange={(e) => setBookingSource(e.target.value)}
               className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}
             >
@@ -361,6 +364,22 @@ export function HostelCheckinForm({
               ))}
             </select>
           </label>
+
+          {/* Hand check-ins go to the PMS too. The booking site's number lets the PMS match the
+              booking it already imported (and stops the next import adding the guest twice). */}
+          {!prefill && bookingSource !== "" && bookingSource !== "direct" && bookingSource !== "other" && (
+            <label className="text-[12px] font-semibold text-inkSecondary block">
+              Booking number from the booking site (optional)
+              <input
+                name="ota_ref"
+                maxLength={60}
+                autoComplete="off"
+                placeholder="e.g. 4512 889 301"
+                className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
+                style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}
+              />
+            </label>
+          )}
 
           <div>
             <div className="text-[12px] font-semibold text-inkSecondary mb-1.5">Payment</div>
@@ -459,7 +478,7 @@ export function HostelCheckinForm({
       {!open && !sent && (
         <p className="text-[13px] text-inkMuted m-0">
           Passport + room key photo, room (and bed, for a dorm), booking source and payment —
-          goes straight into the log below.
+          goes straight into the log below, and into the PMS.
         </p>
       )}
     </div>
