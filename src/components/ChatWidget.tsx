@@ -185,7 +185,8 @@ export function ChatWidget({ currentUserName }: { currentUserName: string }) {
   const panelStyle = useMemo(() => {
     const right = Math.max(8, pos.right);
     let bottom = pos.bottom + BUBBLE + 10;
-    if (window.innerHeight - bottom - PANEL_H < 16) {
+    // Also runs during the server render, where there's no window to measure.
+    if (typeof window !== "undefined" && window.innerHeight - bottom - PANEL_H < 16) {
       bottom = Math.max(8, pos.bottom - PANEL_H - 10);
     }
     return { right, bottom, width: PANEL_W, height: PANEL_H };
