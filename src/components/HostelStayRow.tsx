@@ -7,7 +7,9 @@ import {
   checkOutGuest,
   extendHostelStay,
   refreshHostelPhotoUrl,
+  retryPmsSync,
   updateHostelStayNote,
+  type PmsAwareResult,
   type BookingSource,
   type HostelStayExtension,
   type PaymentMethod,
@@ -53,6 +55,8 @@ export type StayLike = {
   passportPhotoUrls: string[];
   roomKeyPhotoUrl: string | null;
   extensions: HostelStayExtension[];
+  pmsRef?: string | null;
+  pmsSyncError?: string | null;
 };
 
 function fmtShortDate(d: string): string {
@@ -112,13 +116,35 @@ export function HostelStayRow({
   function checkOut() {
     if (!confirm(`Check out ${stay.guestName || roomLabel}?`)) return;
     start(async () => {
-      const res = await checkOutGuest(stay.id);
-      if (!res.ok) {
-        alert(res.error ?? "Something went wrong.");
-        return;
-      }
-      router.refresh();      onChanged?.();
+      await withBalanceCheck((allowBalance) => checkOutGuest(stay.id, { allowBalance }));
     });
+  }
+
+  function retryPms() {
+    start(async () => {
+      await withBalanceCheck((allowBalance) => retryPmsSync(stay.id, { allowBalance }));
+    });
+  }
+
+  /**
+   * Runs a PMS-linked action. If the PMS says the guest still owes money,
+   * show the amount and only go ahead (leaving the balance open in the PMS)
+   * once staff confirm.
+   */
+  async function withBalanceCheck(run: (allowBalance: boolean) => Promise<PmsAwareResult>) {
+    let res = await run(false);
+    if (!res.ok && res.balanceDue != null) {
+      const owed = `฿${res.balanceDue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+      if (!confirm(`${stay.guestName || roomLabel} still owes ${owed} in the PMS.\n\nTake payment first, or check out anyway and leave the balance open?`)) return;
+      res = await run(true);
+    }
+    if (!res.ok) {
+      alert(res.error ?? "Something went wrong.");
+      return;
+    }
+    if (res.warning) alert(res.warning);
+    router.refresh();
+    onChanged?.();
   }
 
   function saveNote() {
@@ -199,6 +225,22 @@ export function HostelStayRow({
             {stay.amountThb != null ? ` \u00b7 \u0e3f${stay.amountThb.toLocaleString()}` : ""}
             {stay.extensions.length > 0 ? " (original)" : ""}
           </div>
+          {stay.pmsSyncError ? (
+            <div
+              className="text-[11.5px] rounded-[8px] px-2.5 py-1.5 mt-1.5 flex items-center gap-2"
+              style={{ background: "var(--warning-soft)", color: "var(--warning)" }}
+            >
+              <span className="flex-1">
+                <span className="font-semibold">PMS not updated{stay.pmsRef ? ` (#${stay.pmsRef})` : ""}: </span>
+                {stay.pmsSyncError}
+              </span>
+              <button type="button" disabled={working} onClick={retryPms} className="font-semibold underline">
+                {working ? "…" : "Retry"}
+              </button>
+            </div>
+          ) : (
+            stay.pmsRef && <div className="text-[11px] text-inkMuted mt-0.5">PMS booking #{stay.pmsRef}</div>
+          )}
           <div className="text-[11px] text-inkMuted mt-1">
             In: {stay.checkedInEmployeeName} · {fmtDateBKK(stay.checkedInAt)} {fmtTimeBKK(stay.checkedInAt)}
           </div>

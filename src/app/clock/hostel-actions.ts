@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveWorkingBranch } from "@/lib/working-branch";
 import { notifyManagers } from "@/lib/notify";
 import { findHostelRoom } from "@/lib/hostel-rooms";
+import { pmsFrontDesk, pmsSetStatus, type PmsBooking, type PmsErrorCode } from "@/lib/pms";
 
 const BUCKET = "hostel-checkins";
 const SIGNED_URL_TTL = 60 * 10; // 10 minutes, same as the other photo logs.
@@ -16,6 +17,14 @@ export type BookingSource = "booking_com" | "agoda" | "airbnb" | "hostelworld" |
 export type PaymentMethod = "ota_collect" | "cash" | "bank_transfer";
 
 export type Result = { ok: true } | { ok: false; error: string };
+
+/**
+ * Check-out / PMS retry result. `warning` means it worked here but the PMS
+ * wasn't updated (shown to staff, and saved on the stay for a retry).
+ * `balanceDue` means the PMS says the guest still owes money: ask, then
+ * call again with allowBalance.
+ */
+export type PmsAwareResult = { ok: true; warning?: string } | { ok: false; error: string; balanceDue?: number };
 
 const BOOKING_SOURCES = new Set<BookingSource>([
   "booking_com",
@@ -115,6 +124,26 @@ export async function checkInGuest(formData: FormData): Promise<Result> {
   if ("error" in roomKey) return { ok: false, error: roomKey.error };
 
   const admin = createAdminClient();
+
+  // Checking in a PMS arrival: mark it checked in over there FIRST, so a
+  // refusal (arriving early, cancelled, closed month) comes back before any
+  // passport photo is uploaded. Safe to repeat -- if the insert below fails
+  // and staff try again, the PMS just answers "already checked in".
+  const pmsBookingId = String(formData.get("pms_booking_id") || "").trim().slice(0, 100) || null;
+  let pmsRef: string | null = null;
+  if (pmsBookingId) {
+    const { data: existing } = await admin
+      .from("hostel_stays")
+      .select("id")
+      .eq("org_id", guard.orgId)
+      .eq("pms_booking_id", pmsBookingId)
+      .maybeSingle();
+    if (existing) return { ok: false, error: "This booking is already in the hostel log." };
+
+    const pms = await pmsSetStatus({ bookingId: pmsBookingId, action: "check_in", staffName: guard.fullName });
+    if (!pms.ok) return { ok: false, error: `PMS: ${pms.message}` };
+    pmsRef = pms.booking.ref;
+  }
   const branchId = await resolveWorkingBranch(guard.employeeId, guard.branchId);
 
   const extOf = (name: string) => (name.match(/\.[a-zA-Z0-9]+$/)?.[0] || ".jpg").toLowerCase();
@@ -162,11 +191,20 @@ export async function checkInGuest(formData: FormData): Promise<Result> {
     room_key_photo_path: roomKeyPath,
     checked_in_employee_id: guard.employeeId,
     checked_in_employee_name: guard.fullName,
+    pms_booking_id: pmsBookingId,
+    pms_ref: pmsRef,
+    pms_synced_at: pmsBookingId ? new Date().toISOString() : null,
   });
 
   if (insertError) {
     await admin.storage.from(BUCKET).remove([...passportPaths, roomKeyPath]);
-    return { ok: false, error: insertError.message };
+    if (insertError.code === "23505") return { ok: false, error: "This booking is already in the hostel log." };
+    return {
+      ok: false,
+      error: pmsBookingId
+        ? `Checked in on the PMS, but the log entry didn't save (${insertError.message}). Try again.`
+        : insertError.message,
+    };
   }
 
   void notifyManagers({
@@ -185,19 +223,41 @@ export async function checkInGuest(formData: FormData): Promise<Result> {
 }
 
 /** Mark a guest as checked out — whoever's at the desk when they leave, not necessarily who checked them in. */
-export async function checkOutGuest(stayId: string): Promise<Result> {
+export async function checkOutGuest(
+  stayId: string,
+  opts: { allowBalance?: boolean } = {}
+): Promise<PmsAwareResult> {
   const guard = await requireEmployee("clock.checkOutGuest");
   if (!guard.ok) return { ok: false, error: guard.error };
 
   const admin = createAdminClient();
   const { data: stay } = await admin
     .from("hostel_stays")
-    .select("id, org_id, checked_out_at")
+    .select("id, org_id, checked_out_at, pms_booking_id")
     .eq("id", stayId)
     .maybeSingle();
 
   if (!stay || stay.org_id !== guard.orgId) return { ok: false, error: "Guest record not found." };
   if (stay.checked_out_at) return { ok: false, error: "Already checked out." };
+
+  // Linked to a PMS booking: check out there first. Money owed, an early
+  // departure or a closed month stops it (staff confirm / use the PMS). The
+  // PMS being down never stops a guest from leaving -- it's checked out here
+  // and flagged for a retry instead.
+  let pmsUpdate: { pms_synced_at: string | null; pms_sync_error: string | null } | null = null;
+  if (stay.pms_booking_id) {
+    const pms = await pmsSetStatus({
+      bookingId: stay.pms_booking_id as string,
+      action: "check_out",
+      staffName: guard.fullName,
+      allowBalance: opts.allowBalance === true,
+    });
+    if (!pms.ok && pms.code === "balance_due") return { ok: false, error: pms.message, balanceDue: pms.balance ?? 0 };
+    if (!pms.ok && BLOCKING.has(pms.code)) return { ok: false, error: `PMS: ${pms.message}` };
+    pmsUpdate = pms.ok
+      ? { pms_synced_at: new Date().toISOString(), pms_sync_error: null }
+      : { pms_synced_at: null, pms_sync_error: `Check-out: ${pms.message}` };
+  }
 
   const { error } = await admin
     .from("hostel_stays")
@@ -205,6 +265,7 @@ export async function checkOutGuest(stayId: string): Promise<Result> {
       checked_out_at: new Date().toISOString(),
       checked_out_employee_id: guard.employeeId,
       checked_out_employee_name: guard.fullName,
+      ...(pmsUpdate ?? {}),
     })
     .eq("id", stayId);
 
@@ -212,7 +273,87 @@ export async function checkOutGuest(stayId: string): Promise<Result> {
 
   revalidatePath("/clock");
   revalidatePath("/hostel");
+  return pmsUpdate?.pms_sync_error
+    ? { ok: true, warning: `Checked out here, but the PMS wasn't updated: ${pmsUpdate.pms_sync_error}` }
+    : { ok: true };
+}
+
+/** PMS answers that need a person (or the PMS itself) before the change can go through. */
+const BLOCKING = new Set<PmsErrorCode>(["early_departure", "month_closed"]);
+
+/**
+ * Send a stay's check-in / check-out to the PMS again, after it couldn't
+ * be reached the first time (the stay shows "PMS not updated").
+ */
+export async function retryPmsSync(stayId: string, opts: { allowBalance?: boolean } = {}): Promise<PmsAwareResult> {
+  const guard = await requireEmployeeOrManager("hostel.retryPmsSync");
+  if (!guard.ok) return { ok: false, error: guard.error };
+
+  const admin = createAdminClient();
+  const { data: stay } = await admin
+    .from("hostel_stays")
+    .select("id, checked_out_at, pms_booking_id")
+    .eq("id", stayId)
+    .eq("org_id", guard.orgId)
+    .maybeSingle();
+  if (!stay) return { ok: false, error: "Guest record not found." };
+  if (!stay.pms_booking_id) return { ok: false, error: "This stay isn't linked to a PMS booking." };
+
+  const pms = await pmsSetStatus({
+    bookingId: stay.pms_booking_id as string,
+    action: stay.checked_out_at ? "check_out" : "check_in",
+    staffName: guard.actorName,
+    allowBalance: opts.allowBalance === true,
+  });
+  if (!pms.ok && pms.code === "balance_due") return { ok: false, error: pms.message, balanceDue: pms.balance ?? 0 };
+  if (!pms.ok) return { ok: false, error: `PMS: ${pms.message}` };
+
+  const { error } = await admin
+    .from("hostel_stays")
+    .update({ pms_synced_at: new Date().toISOString(), pms_sync_error: null })
+    .eq("id", stayId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/clock");
+  revalidatePath("/hostel");
   return { ok: true };
+}
+
+export type PmsFrontDeskView =
+  | {
+      ok: true;
+      date: string;
+      arrivals: PmsBooking[];
+      inHouse: (PmsBooking & { inLog: boolean })[];
+    }
+  | { ok: false; code: PmsErrorCode; error: string };
+
+/**
+ * Today's PMS arrivals and in-house guests for the clock screen. Each
+ * in-house guest says whether they're in the Work OS log (checked in here,
+ * so they can be checked out from the log), or were checked in on a PMS
+ * tablet and have to be checked out there.
+ */
+export async function listPmsFrontDesk(): Promise<PmsFrontDeskView> {
+  const guard = await requireEmployee("clock.listPmsFrontDesk");
+  if (!guard.ok) return { ok: false, code: "unauthorized", error: guard.error };
+
+  const pms = await pmsFrontDesk();
+  if (!pms.ok) return { ok: false, code: pms.code, error: pms.message };
+
+  const admin = createAdminClient();
+  const ids = pms.inHouse.map((b) => b.id);
+  const { data: linked } = ids.length
+    ? await admin.from("hostel_stays").select("pms_booking_id").eq("org_id", guard.orgId).in("pms_booking_id", ids)
+    : { data: [] as { pms_booking_id: string }[] };
+  const inLog = new Set((linked ?? []).map((r) => r.pms_booking_id as string));
+
+  return {
+    ok: true,
+    date: pms.date,
+    arrivals: pms.arrivals,
+    inHouse: pms.inHouse.map((b) => ({ ...b, inLog: inLog.has(b.id) })),
+  };
 }
 
 /**
@@ -393,6 +534,8 @@ export type MyBranchHostelStay = {
   checkedOutEmployeeName: string | null;
   passportPhotoUrls: string[];
   roomKeyPhotoUrl: string | null;
+  pmsRef: string | null;
+  pmsSyncError: string | null;
   extensions: HostelStayExtension[];
 };
 
@@ -411,7 +554,7 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
   const { data: rows, error } = await admin
     .from("hostel_stays")
     .select(
-      "id, guest_name, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name"
+      "id, guest_name, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_ref, pms_sync_error"
     )
     .eq("org_id", guard.orgId)
     .eq("branch_id", branchId)
@@ -453,6 +596,8 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
       passportPhotoUrls: passportPaths,
       roomKeyPhotoUrl: (r.room_key_photo_path as string | null) ?? null,
       extensions: extensionsByStay.get(r.id as string) ?? [],
+      pmsRef: r.pms_ref as string | null,
+      pmsSyncError: r.pms_sync_error as string | null,
     };
   });
 }
