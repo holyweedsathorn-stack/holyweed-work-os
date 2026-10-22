@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireManager } from "@/lib/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { removeCancelledPmsStays } from "@/lib/hostel-pms-cancel";
 import type { BookingSource, HostelStayExtension, PaymentMethod, RoomType } from "@/app/clock/hostel-actions";
 
 const BUCKET = "hostel-checkins";
@@ -83,7 +84,7 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
     admin
       .from("hostel_stays")
       .select(
-        "id, guest_name, branch_id, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_ref, pms_sync_error"
+        "id, guest_name, branch_id, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_booking_id, pms_ref, pms_sync_error"
       )
       .eq("org_id", guard.orgId)
       .order("checked_in_at", { ascending: false })
@@ -94,7 +95,10 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
   if (error || !rows) return { error: error?.message ?? "Could not load the hostel log." };
 
   const branchById = new Map((branches ?? []).map((b) => [b.id as string, b.name as string]));
-  const extensionsByStay = await fetchExtensionsByStay(admin, rows.map((r) => r.id as string));
+  // Guests whose booking was cancelled in the PMS come off the log here.
+  const cancelled = await removeCancelledPmsStays(admin, guard.orgId, rows);
+  const stays = rows.filter((r) => !cancelled.has(r.id as string));
+  const extensionsByStay = await fetchExtensionsByStay(admin, stays.map((r) => r.id as string));
 
   // Same reasoning as the clock-screen version of this list (see
   // clock/hostel-actions.ts): HostelStayRow only reads .length / truthiness
@@ -104,7 +108,7 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
   // them here was several hundred unused Supabase Storage calls blocking
   // every single page load. The stored paths are non-null strings, so they
   // satisfy the same shape with no Storage calls at all.
-  return rows.map((r): HostelStay => {
+  return stays.map((r): HostelStay => {
     const passportPaths = (r.passport_photo_paths as string[] | null) ?? [];
     return {
       id: r.id as string,
