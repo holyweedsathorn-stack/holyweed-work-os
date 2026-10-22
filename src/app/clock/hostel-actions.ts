@@ -7,6 +7,7 @@ import { resolveWorkingBranch } from "@/lib/working-branch";
 import { notifyManagers } from "@/lib/notify";
 import { findHostelRoom } from "@/lib/hostel-rooms";
 import { pmsFrontDesk, pmsSetStatus, pmsWalkIn, type PmsBooking, type PmsErrorCode } from "@/lib/pms";
+import { removeCancelledPmsStays } from "@/lib/hostel-pms-cancel";
 
 const BUCKET = "hostel-checkins";
 const SIGNED_URL_TTL = 60 * 10; // 10 minutes, same as the other photo logs.
@@ -626,7 +627,7 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
   const { data: rows, error } = await admin
     .from("hostel_stays")
     .select(
-      "id, guest_name, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_ref, pms_sync_error"
+      "id, guest_name, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_booking_id, pms_ref, pms_sync_error"
     )
     .eq("org_id", guard.orgId)
     .eq("branch_id", branchId)
@@ -635,7 +636,10 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
 
   if (error || !rows) return { error: error?.message ?? "Could not load the hostel log." };
 
-  const extensionsByStay = await fetchExtensionsByStay(admin, rows.map((r) => r.id as string));
+  // Guests whose booking was cancelled in the PMS come off the log here.
+  const cancelled = await removeCancelledPmsStays(admin, guard.orgId, rows);
+  const stays = rows.filter((r) => !cancelled.has(r.id as string));
+  const extensionsByStay = await fetchExtensionsByStay(admin, stays.map((r) => r.id as string));
 
   // HostelStayRow never renders these as <img src> -- it only reads
   // .length / truthiness to decide how many "view photo" buttons to show,
@@ -646,7 +650,7 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
   // page, for values nothing ever displayed. The stored paths themselves
   // are non-null strings, so they satisfy the same string[] / string|null
   // shape without touching Storage at all.
-  return rows.map((r): MyBranchHostelStay => {
+  return stays.map((r): MyBranchHostelStay => {
     const passportPaths = (r.passport_photo_paths as string[] | null) ?? [];
     return {
       id: r.id as string,

@@ -107,6 +107,11 @@ export function pmsSetStatus(input: {
   return call("/api/workos/booking-status", { method: "POST", body: JSON.stringify(input) });
 }
 
+/** Current PMS status of these bookings ("cancelled", "checked_in", ...). Bookings the PMS doesn't have are left out. */
+export function pmsBookingStatuses(ids: string[]): Promise<PmsResult<{ statuses: Record<string, string> }>> {
+  return call("/api/workos/booking-statuses", { method: "POST", body: JSON.stringify({ ids }) });
+}
+
 /**
  * A guest checked in here by hand: the PMS checks in the booking it
  * already has for them (same OTA number, or same name arriving now), or

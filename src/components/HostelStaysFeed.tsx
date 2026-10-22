@@ -22,12 +22,18 @@ export function HostelStaysFeed() {
     let alive = true;
     load();
     async function load() {
-      const result = await listMyBranchHostelStays();
-      if (!alive) return;
+      const result = await listMyBranchHostelStays().catch(() => null);
+      if (!alive || !result) return;
       setState("error" in result ? { error: result.error } : { stays: result });
     }
+    // Re-read every minute and when the screen comes back into view, so a
+    // booking cancelled in the PMS drops off this log without a reload.
+    const t = setInterval(load, 60_000);
+    window.addEventListener("focus", load);
     return () => {
       alive = false;
+      clearInterval(t);
+      window.removeEventListener("focus", load);
     };
   }, []);
 
