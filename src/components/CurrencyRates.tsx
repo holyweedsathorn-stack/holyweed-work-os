@@ -7,6 +7,7 @@ const CURRENCIES: { code: string; label: string; perHundred?: boolean }[] = [
   { code: "CNY", label: "Chinese Yuan" },
   { code: "JPY", label: "Japanese Yen", perHundred: true },
   { code: "AUD", label: "Australian Dollar" },
+  { code: "BHD", label: "Bahraini Dinar" },
 ];
 
 type RatesResult = { rates: Record<string, number>; updatedAtUtc: string } | null;

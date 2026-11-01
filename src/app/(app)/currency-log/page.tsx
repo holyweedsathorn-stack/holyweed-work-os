@@ -161,7 +161,7 @@ export default async function CurrencyLogPage({
                         {t.currencyCode}
                       </td>
                       <td className="py-2.5 text-[12.5px] text-right num" style={{ borderTop: "1px solid var(--line)" }}>
-                        {t.foreignAmount.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                        {t.foreignAmount.toLocaleString("en-US", { maximumFractionDigits: t.currencyCode === "BHD" ? 3 : 2 })}
                       </td>
                       <td className="py-2.5 text-[12.5px] text-right num text-inkMuted" style={{ borderTop: "1px solid var(--line)" }}>
                         ฿{t.rateThbPerUnit.toFixed(4)}

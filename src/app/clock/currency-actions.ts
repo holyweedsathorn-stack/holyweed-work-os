@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export type Result = { ok: true } | { ok: false; error: string };
 
-const ALLOWED_CURRENCIES = new Set(["USD", "EUR", "GBP", "CNY", "JPY", "AUD"]);
+const ALLOWED_CURRENCIES = new Set(["USD", "EUR", "GBP", "CNY", "JPY", "AUD", "BHD"]);
 
 /**
  * Record a completed foreign-cash transaction: the currency, amount, the

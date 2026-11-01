@@ -81,7 +81,7 @@ export async function CurrencyLogFeed() {
                 </div>
                 <div className="text-right flex-none">
                   <div className="text-[12.5px] font-semibold num">
-                    {t.foreignAmount.toLocaleString("en-US", { maximumFractionDigits: 2 })} {t.currencyCode}
+                    {t.foreignAmount.toLocaleString("en-US", { maximumFractionDigits: t.currencyCode === "BHD" ? 3 : 2 })} {t.currencyCode}
                   </div>
                   <div className="text-[11px] text-inkMuted num">฿{t.totalThb.toFixed(0)} total</div>
                 </div>

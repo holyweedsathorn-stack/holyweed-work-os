@@ -39,7 +39,7 @@ export function CurrencyConverter({ currencies }: { currencies: ConvertibleCurre
   if (!selected) return null;
 
   const rateDisplay = selected.perHundred ? selected.thbPerUnit * 100 : selected.thbPerUnit;
-  const decimals = selected.code === "JPY" ? 0 : 2;
+  const decimals = selected.code === "JPY" ? 0 : selected.code === "BHD" ? 3 : 2;
   const foreignAmount = totalThb !== null ? totalThb / selected.thbPerUnit : null;
 
   function logTransaction() {
