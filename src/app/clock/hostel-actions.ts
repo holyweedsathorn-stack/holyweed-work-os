@@ -6,8 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveWorkingBranch } from "@/lib/working-branch";
 import { notifyManagers } from "@/lib/notify";
 import { findHostelRoom } from "@/lib/hostel-rooms";
-import { pmsFrontDesk, pmsSetStatus, pmsWalkIn, type PmsBooking, type PmsErrorCode } from "@/lib/pms";
-import { removeCancelledPmsStays } from "@/lib/hostel-pms-cancel";
+import { pmsExtend, pmsFrontDesk, pmsSetStatus, pmsWalkIn, type PmsBooking, type PmsErrorCode } from "@/lib/pms";
+import { bangkokDate, pushStayToPms, syncHostelWithPms } from "@/lib/hostel-pms-sync";
 
 const BUCKET = "hostel-checkins";
 const SIGNED_URL_TTL = 60 * 10; // 10 minutes, same as the other photo logs.
@@ -204,9 +204,7 @@ export async function checkInGuest(formData: FormData): Promise<Result> {
     return { ok: false, error: firstError!.message };
   }
 
-  const { error: insertError } = await admin.from("hostel_stays").insert({
-    id: stayId,
-    org_id: guard.orgId,
+  const row = {
     branch_id: branchId,
     guest_name: guestName,
     room_type: roomType,
@@ -227,7 +225,25 @@ export async function checkInGuest(formData: FormData): Promise<Result> {
     pms_ref: pmsRef,
     pms_synced_at: pmsBookingId ? new Date().toISOString() : null,
     pms_sync_error: pmsSyncError,
-  });
+  };
+  let { error: insertError } = await admin.from("hostel_stays").insert({ id: stayId, org_id: guard.orgId, ...row });
+
+  // Already on the log because the PMS sync added this guest a moment ago (checked in on the
+  // PMS, no photos yet): fill that entry in with this check-in rather than refusing it.
+  if (insertError?.code === "23505" && pmsBookingId) {
+    const { data: fromPms } = await admin
+      .from("hostel_stays")
+      .select("id, origin, passport_photo_paths, room_key_photo_path")
+      .eq("org_id", guard.orgId)
+      .eq("pms_booking_id", pmsBookingId)
+      .maybeSingle();
+    if (fromPms && fromPms.origin === "pms" && !(fromPms.passport_photo_paths as string[] | null)?.length && !fromPms.room_key_photo_path) {
+      ({ error: insertError } = await admin
+        .from("hostel_stays")
+        .update({ ...row, origin: "workos", checked_out_at: null, checked_out_employee_id: null, checked_out_employee_name: null })
+        .eq("id", fromPms.id as string));
+    }
+  }
 
   if (insertError) {
     await admin.storage.from(BUCKET).remove([...passportPaths, roomKeyPath]);
@@ -322,11 +338,6 @@ const BLOCKING = new Set<PmsErrorCode>(["early_departure", "month_closed"]);
  */
 const WALK_IN_BLOCKING = new Set<PmsErrorCode>(["room_taken", "duplicate_guest"]);
 
-/** YYYY-MM-DD in Bangkok, for a timestamp (now if none). */
-function bangkokDate(iso?: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(iso ? new Date(iso) : new Date());
-}
-
 /**
  * Send a stay's check-in / check-out to the PMS again, after it couldn't
  * be reached the first time (the stay shows "PMS not updated").
@@ -335,57 +346,8 @@ export async function retryPmsSync(stayId: string, opts: { allowBalance?: boolea
   const guard = await requireEmployeeOrManager("hostel.retryPmsSync");
   if (!guard.ok) return { ok: false, error: guard.error };
 
-  const admin = createAdminClient();
-  const { data: stay } = await admin
-    .from("hostel_stays")
-    .select(
-      "id, guest_name, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, checked_in_at, checked_in_employee_name, checked_out_at, pms_booking_id"
-    )
-    .eq("id", stayId)
-    .eq("org_id", guard.orgId)
-    .maybeSingle();
-  if (!stay) return { ok: false, error: "Guest record not found." };
-
-  // A hand check-in that never reached the PMS: send the walk-in now (same
-  // stay id, so it can't create a second booking if the first one did land).
-  let bookingId = stay.pms_booking_id as string | null;
-  if (!bookingId) {
-    const walkIn = await pmsWalkIn({
-      stayId: stay.id as string,
-      guestName: stay.guest_name as string | null,
-      roomNumber: stay.room_number as string,
-      bedNumber: stay.bed_number as string | null,
-      checkIn: bangkokDate(stay.checked_in_at as string),
-      checkOut: stay.expected_checkout_date as string | null,
-      bookingSource: stay.booking_source as string,
-      paymentMethod: stay.payment_method as string,
-      amountThb: stay.amount_thb != null ? Number(stay.amount_thb) : null,
-      notes: stay.notes as string | null,
-      staffName: stay.checked_in_employee_name as string,
-    });
-    if (!walkIn.ok) return { ok: false, error: `PMS: ${walkIn.message}` };
-    bookingId = walkIn.booking.id;
-    const { error: linkError } = await admin
-      .from("hostel_stays")
-      .update({ pms_booking_id: bookingId, pms_ref: walkIn.booking.ref })
-      .eq("id", stayId);
-    if (linkError) return { ok: false, error: linkError.message };
-  }
-
-  const pms = await pmsSetStatus({
-    bookingId,
-    action: stay.checked_out_at ? "check_out" : "check_in",
-    staffName: guard.actorName,
-    allowBalance: opts.allowBalance === true,
-  });
-  if (!pms.ok && pms.code === "balance_due") return { ok: false, error: pms.message, balanceDue: pms.balance ?? 0 };
-  if (!pms.ok) return { ok: false, error: `PMS: ${pms.message}` };
-
-  const { error } = await admin
-    .from("hostel_stays")
-    .update({ pms_synced_at: new Date().toISOString(), pms_sync_error: null })
-    .eq("id", stayId);
-  if (error) return { ok: false, error: error.message };
+  const res = await pushStayToPms(createAdminClient(), guard.orgId, stayId, guard.actorName, opts.allowBalance === true);
+  if (!res.ok) return { ok: false, error: res.error, balanceDue: res.balanceDue };
 
   revalidatePath("/clock");
   revalidatePath("/hostel");
@@ -427,6 +389,88 @@ export async function listPmsFrontDesk(): Promise<PmsFrontDeskView> {
     arrivals: pms.arrivals,
     inHouse: pms.inHouse.map((b) => ({ ...b, inLog: inLog.has(b.id) })),
   };
+}
+
+/**
+ * Sync the hostel log with the PMS now and say whether it worked. The log
+ * screens call this before loading the list, and show the warning (PMS
+ * unreachable, PMS needs updating, database step missing, ...) above it so
+ * a sync that can't run is never silent. null = in sync.
+ */
+export async function syncHostelLog(): Promise<{ warning: string | null }> {
+  const guard = await requireEmployeeOrManager("hostel.sync");
+  if (!guard.ok) return { warning: null };
+  return { warning: await syncHostelWithPms(createAdminClient(), guard.orgId) };
+}
+
+/**
+ * Add passport photo(s) and/or the room key photo to a stay that doesn't
+ * have them -- mostly guests checked in on a PMS tablet, who reach the log
+ * with no photos. Passport photos are added to any already there (up to
+ * the usual limit); a key photo is only set when there isn't one.
+ */
+export async function addHostelStayPhotos(formData: FormData): Promise<Result> {
+  const guard = await requireEmployeeOrManager("hostel.addPhotos");
+  if (!guard.ok) return { ok: false, error: guard.error };
+
+  const stayId = String(formData.get("stay_id") || "");
+  const admin = createAdminClient();
+  const { data: stay } = await admin
+    .from("hostel_stays")
+    .select("id, passport_photo_paths, room_key_photo_path")
+    .eq("id", stayId)
+    .eq("org_id", guard.orgId)
+    .maybeSingle();
+  if (!stay) return { ok: false, error: "Guest record not found." };
+
+  const existing = (stay.passport_photo_paths as string[] | null) ?? [];
+  const passportFiles = formData.getAll("passport_photos").filter((f): f is File => f instanceof File && f.size > 0);
+  for (const f of passportFiles) {
+    const checked = checkPhoto(f, "passport photo");
+    if ("error" in checked) return { ok: false, error: checked.error };
+  }
+  if (existing.length + passportFiles.length > MAX_PASSPORT_PHOTOS) {
+    return { ok: false, error: `That's a lot of passport photos — ${MAX_PASSPORT_PHOTOS} max per guest.` };
+  }
+  const keyEntry = formData.get("room_key_photo");
+  const keyFile = keyEntry instanceof File && keyEntry.size > 0 && !stay.room_key_photo_path ? keyEntry : null;
+  if (keyFile) {
+    const checked = checkPhoto(keyFile, "room key photo");
+    if ("error" in checked) return { ok: false, error: checked.error };
+  }
+  if (passportFiles.length === 0 && !keyFile) return { ok: false, error: "Choose a photo first." };
+
+  const folder = `${guard.orgId}/added-later`;
+  const extOf = (name: string) => (name.match(/\.[a-zA-Z0-9]+$/)?.[0] || ".jpg").toLowerCase();
+  const passportPaths = passportFiles.map((f) => `${folder}/passport-${crypto.randomUUID()}${extOf(f.name)}`);
+  const keyPath = keyFile ? `${folder}/key-${crypto.randomUUID()}${extOf(keyFile.name)}` : null;
+
+  const uploads = await Promise.all([
+    ...passportFiles.map((f, i) => admin.storage.from(BUCKET).upload(passportPaths[i], f, { contentType: f.type || "image/jpeg" })),
+    ...(keyFile && keyPath ? [admin.storage.from(BUCKET).upload(keyPath, keyFile, { contentType: keyFile.type || "image/jpeg" })] : []),
+  ]);
+  const uploaded = [...passportPaths, ...(keyPath ? [keyPath] : [])];
+  const failed = uploads.find((u) => u.error);
+  if (failed) {
+    await admin.storage.from(BUCKET).remove(uploaded.filter((_, i) => !uploads[i].error));
+    return { ok: false, error: failed.error!.message };
+  }
+
+  const { error } = await admin
+    .from("hostel_stays")
+    .update({
+      passport_photo_paths: [...existing, ...passportPaths],
+      ...(keyPath ? { room_key_photo_path: keyPath } : {}),
+    })
+    .eq("id", stayId);
+  if (error) {
+    await admin.storage.from(BUCKET).remove(uploaded);
+    return { ok: false, error: error.message };
+  }
+
+  revalidatePath("/clock");
+  revalidatePath("/hostel");
+  return { ok: true };
 }
 
 /**
@@ -504,7 +548,7 @@ export async function extendHostelStay(input: {
   const admin = createAdminClient();
   const { data: stay } = await admin
     .from("hostel_stays")
-    .select("id, branch_id, checked_out_at, expected_checkout_date")
+    .select("id, branch_id, checked_out_at, expected_checkout_date, pms_booking_id")
     .eq("id", input.stayId)
     .eq("org_id", guard.orgId)
     .maybeSingle();
@@ -516,6 +560,21 @@ export async function extendHostelStay(input: {
     if (!input.paymentMethod || !PAYMENT_METHODS.has(input.paymentMethod)) {
       return { ok: false, error: "Choose how the extra nights were paid." };
     }
+  }
+
+  // Linked to a PMS booking: move the PMS check-out date first (the extension payment goes on it
+  // as "to collect"). The PMS decides dates, so if it refuses -- room booked in the new nights,
+  // closed month -- or can't be reached, nothing changes here either.
+  if (stay.pms_booking_id) {
+    if (!newDate) return { ok: false, error: "Choose the new check-out date." };
+    const pms = await pmsExtend({
+      bookingId: stay.pms_booking_id as string,
+      checkOut: newDate,
+      amountThb: charged ? (input.amountThb as number) : null,
+      paymentMethod: charged ? (input.paymentMethod as string) : null,
+      staffName: guard.actorName,
+    });
+    if (!pms.ok) return { ok: false, error: `PMS: ${pms.message}` };
   }
 
   const { error: updateError } = await admin
@@ -609,6 +668,7 @@ export type MyBranchHostelStay = {
   roomKeyPhotoUrl: string | null;
   pmsRef: string | null;
   pmsSyncError: string | null;
+  origin: "workos" | "pms";
   extensions: HostelStayExtension[];
 };
 
@@ -623,11 +683,13 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
 
   const admin = createAdminClient();
   const branchId = await resolveWorkingBranch(guard.employeeId, guard.branchId);
+  // Bring the log in line with the PMS first (check-ins / -outs / changes made there).
+  await syncHostelWithPms(admin, guard.orgId);
 
   const { data: rows, error } = await admin
     .from("hostel_stays")
     .select(
-      "id, guest_name, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_booking_id, pms_ref, pms_sync_error"
+      "id, guest_name, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, origin, pms_booking_id, pms_ref, pms_sync_error"
     )
     .eq("org_id", guard.orgId)
     .eq("branch_id", branchId)
@@ -636,9 +698,7 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
 
   if (error || !rows) return { error: error?.message ?? "Could not load the hostel log." };
 
-  // Guests whose booking was cancelled in the PMS come off the log here.
-  const cancelled = await removeCancelledPmsStays(admin, guard.orgId, rows);
-  const stays = rows.filter((r) => !cancelled.has(r.id as string));
+  const stays = rows;
   const extensionsByStay = await fetchExtensionsByStay(admin, stays.map((r) => r.id as string));
 
   // HostelStayRow never renders these as <img src> -- it only reads
@@ -674,6 +734,7 @@ export async function listMyBranchHostelStays(): Promise<MyBranchHostelStay[] | 
       extensions: extensionsByStay.get(r.id as string) ?? [],
       pmsRef: r.pms_ref as string | null,
       pmsSyncError: r.pms_sync_error as string | null,
+      origin: r.origin === "pms" ? "pms" : "workos",
     };
   });
 }
