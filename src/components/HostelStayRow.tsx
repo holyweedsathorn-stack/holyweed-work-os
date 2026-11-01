@@ -3,11 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { fmtTimeBKK, fmtDateBKK, initials } from "@/lib/types";
+import { compressImage } from "@/lib/compress-image";
 import {
   checkOutGuest,
   extendHostelStay,
   refreshHostelPhotoUrl,
   retryPmsSync,
+  addHostelStayPhotos,
   updateHostelStayNote,
   type PmsAwareResult,
   type BookingSource,
@@ -57,6 +59,7 @@ export type StayLike = {
   extensions: HostelStayExtension[];
   pmsRef?: string | null;
   pmsSyncError?: string | null;
+  origin?: "workos" | "pms";
 };
 
 function fmtShortDate(d: string): string {
@@ -123,6 +126,24 @@ export function HostelStayRow({
   function retryPms() {
     start(async () => {
       await withBalanceCheck((allowBalance) => retryPmsSync(stay.id, { allowBalance }));
+    });
+  }
+
+  /** Add passport / key photos to a guest who has none yet (e.g. checked in on the PMS). */
+  function addPhotos(field: "passport_photos" | "room_key_photo", files: FileList | null) {
+    if (!files || files.length === 0) return;
+    start(async () => {
+      const fd = new FormData();
+      fd.set("stay_id", stay.id);
+      // same compression as the check-in form, so phone camera shots fit the upload limit
+      for (const f of Array.from(files)) fd.append(field, await compressImage(f));
+      const res = await addHostelStayPhotos(fd);
+      if (!res.ok) {
+        alert(res.error ?? "Something went wrong.");
+        return;
+      }
+      router.refresh();
+      onChanged?.();
     });
   }
 
@@ -207,7 +228,14 @@ export function HostelStayRow({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-2">
-            <div className="text-[13.5px] font-semibold truncate">{stay.guestName || "Guest"}</div>
+            <div className="text-[13.5px] font-semibold truncate">
+              {stay.guestName || "Guest"}
+              {stay.origin === "pms" && (
+                <span className="chip ml-1.5" style={{ background: "var(--surface-2)", color: "var(--ink-muted)" }}>
+                  From PMS
+                </span>
+              )}
+            </div>
             {!stay.checkedOutAt ? (
               <span className="chip" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
                 Checked in
@@ -424,6 +452,32 @@ export function HostelStayRow({
               <button type="button" onClick={() => openPhoto("key")} className="text-[12px] font-semibold" style={{ color: "var(--accent)" }}>
                 Room key photo
               </button>
+            )}
+            {/* Guests checked in on the PMS reach the log with no photos: take them here. */}
+            {stay.passportPhotoUrls.length === 0 && (
+              <label className="text-[12px] font-semibold cursor-pointer" style={{ color: "var(--warning)" }}>
+                {working ? "Uploading…" : "+ Add passport photo"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={working}
+                  className="hidden"
+                  onChange={(e) => addPhotos("passport_photos", e.target.files)}
+                />
+              </label>
+            )}
+            {!stay.roomKeyPhotoUrl && (
+              <label className="text-[12px] font-semibold cursor-pointer" style={{ color: "var(--warning)" }}>
+                {working ? "Uploading…" : "+ Add room key photo"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={working}
+                  className="hidden"
+                  onChange={(e) => addPhotos("room_key_photo", e.target.files)}
+                />
+              </label>
             )}
             {!editingNote && (
               <button

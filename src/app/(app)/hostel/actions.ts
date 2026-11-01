@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireManager } from "@/lib/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { removeCancelledPmsStays } from "@/lib/hostel-pms-cancel";
+import { syncHostelWithPms } from "@/lib/hostel-pms-sync";
 import type { BookingSource, HostelStayExtension, PaymentMethod, RoomType } from "@/app/clock/hostel-actions";
 
 const BUCKET = "hostel-checkins";
@@ -31,6 +31,7 @@ export type HostelStay = {
   roomKeyPhotoUrl: string | null;
   pmsRef: string | null;
   pmsSyncError: string | null;
+  origin: "workos" | "pms";
   extensions: HostelStayExtension[];
 };
 
@@ -80,11 +81,13 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
   if (!guard.ok) return { error: guard.error };
 
   const admin = createAdminClient();
+  // Bring the log in line with the PMS first (check-ins / -outs / changes made there).
+  await syncHostelWithPms(admin, guard.orgId);
   const [{ data: rows, error }, { data: branches }] = await Promise.all([
     admin
       .from("hostel_stays")
       .select(
-        "id, guest_name, branch_id, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, pms_booking_id, pms_ref, pms_sync_error"
+        "id, guest_name, branch_id, room_type, room_number, bed_number, booking_source, payment_method, amount_thb, expected_checkout_date, notes, notes_updated_by, notes_updated_at, passport_photo_paths, room_key_photo_path, checked_in_at, checked_in_employee_name, checked_out_at, checked_out_employee_name, origin, pms_booking_id, pms_ref, pms_sync_error"
       )
       .eq("org_id", guard.orgId)
       .order("checked_in_at", { ascending: false })
@@ -95,9 +98,7 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
   if (error || !rows) return { error: error?.message ?? "Could not load the hostel log." };
 
   const branchById = new Map((branches ?? []).map((b) => [b.id as string, b.name as string]));
-  // Guests whose booking was cancelled in the PMS come off the log here.
-  const cancelled = await removeCancelledPmsStays(admin, guard.orgId, rows);
-  const stays = rows.filter((r) => !cancelled.has(r.id as string));
+  const stays = rows;
   const extensionsByStay = await fetchExtensionsByStay(admin, stays.map((r) => r.id as string));
 
   // Same reasoning as the clock-screen version of this list (see
@@ -133,6 +134,7 @@ export async function listHostelStays(): Promise<HostelStay[] | { error: string 
       extensions: extensionsByStay.get(r.id as string) ?? [],
       pmsRef: r.pms_ref as string | null,
       pmsSyncError: r.pms_sync_error as string | null,
+      origin: r.origin === "pms" ? "pms" : "workos",
     };
   });
 }

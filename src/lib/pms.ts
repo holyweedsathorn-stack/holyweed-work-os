@@ -28,7 +28,12 @@ export type PmsBooking = {
   unit: { id: string; label: string; type: string; group: string; name: string };
   balance: number;
   notes: string;
+  checkedInAt?: string | null;
+  checkedOutAt?: string | null;
 };
+
+/** A booking as the sync endpoint returns it: also says which Work OS stay it came from, if any. */
+export type PmsSyncBooking = PmsBooking & { workosStayId: string | null };
 
 export type PmsFrontDesk = {
   date: string;
@@ -105,6 +110,30 @@ export function pmsSetStatus(input: {
   allowBalance?: boolean;
 }): Promise<PmsResult<{ already?: boolean; booking: PmsBooking }>> {
   return call("/api/workos/booking-status", { method: "POST", body: JSON.stringify(input) });
+}
+
+/**
+ * What the hostel log needs to match the PMS: every guest checked in now,
+ * guests checked out in the last few days, and the current state of each
+ * booking in `ids` (the ones already on the log), whatever their status.
+ */
+export function pmsSync(ids: string[]): Promise<PmsResult<{ date: string; bookings: PmsSyncBooking[] }>> {
+  return call("/api/workos/sync", { method: "POST", body: JSON.stringify({ ids }) });
+}
+
+/**
+ * Move a PMS booking's check-out date ("Extend" on the log), adding the
+ * extension payment, if any, as "to collect". Refused with "room_taken"
+ * when someone else has the room in the new nights.
+ */
+export function pmsExtend(input: {
+  bookingId: string;
+  checkOut: string;
+  amountThb: number | null;
+  paymentMethod: string | null;
+  staffName: string;
+}): Promise<PmsResult<{ already?: boolean; booking: PmsBooking }>> {
+  return call("/api/workos/extend", { method: "POST", body: JSON.stringify(input) });
 }
 
 /** Current PMS status of these bookings ("cancelled", "checked_in", ...). Bookings the PMS doesn't have are left out. */

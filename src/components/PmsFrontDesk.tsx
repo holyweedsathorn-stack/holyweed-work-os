@@ -1,49 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { listPmsFrontDesk, type BookingSource, type PaymentMethod, type PmsFrontDeskView } from "@/app/clock/hostel-actions";
+import { listPmsFrontDesk, type PmsFrontDeskView } from "@/app/clock/hostel-actions";
 import { HostelCheckinForm, type CheckinPrefill } from "@/components/HostelCheckinForm";
-import { HOSTEL_ROOMS } from "@/lib/hostel-rooms";
+import { paymentForPmsChannel, roomForPmsUnit, sourceForPmsChannel } from "@/lib/hostel-rooms";
 import type { PmsBooking } from "@/lib/pms";
 
 const REFRESH_MS = 60_000;
 
-// PMS channel key -> Work OS booking source
-const SOURCE_BY_CHANNEL: Record<string, BookingSource> = {
-  booking: "booking_com",
-  agoda: "agoda",
-  airbnb: "airbnb",
-  hostelworld: "hostelworld",
-  expedia: "expedia",
-  tripcom: "trip_com",
-  walkin: "direct",
-  direct: "direct",
-};
-const OTA_CHANNELS = new Set(["booking", "agoda", "airbnb", "hostelworld", "expedia", "tripcom"]);
-
-/**
- * Match a PMS unit ("Room 202", or "Dorm 201 · Bed 3") to the Work OS room
- * list by its room number. No match leaves the room for staff to choose.
- */
-function matchRoom(b: PmsBooking): { roomNumber: string; bedNumber: string } {
-  const text = `${b.unit.group} ${b.unit.name}`;
-  const room = HOSTEL_ROOMS.find((r) => new RegExp(`(^|\\D)${r.number}(\\D|$)`).test(text));
-  if (!room) return { roomNumber: "", bedNumber: "" };
-  if (room.type !== "dorm") return { roomNumber: room.number, bedNumber: "" };
-  const bed = Number(b.unit.name.match(/bed\s*(\d+)/i)?.[1] ?? b.unit.name.match(/^\D*(\d{1,2})\D*$/)?.[1]);
-  return { roomNumber: room.number, bedNumber: bed >= 1 && bed <= (room.beds ?? 0) ? String(bed) : "" };
-}
-
 function toPrefill(b: PmsBooking): CheckinPrefill {
+  const { roomNumber, bedNumber } = roomForPmsUnit(b.unit); // no match: staff choose the room
   return {
     pmsBookingId: b.id,
     pmsRef: b.ref,
     unitLabel: b.unit.label,
     guestName: b.guestName,
-    ...matchRoom(b),
+    roomNumber,
+    bedNumber,
     expectedCheckoutDate: b.checkOut,
-    bookingSource: SOURCE_BY_CHANNEL[b.channel] ?? (b.channel ? "other" : ""),
-    paymentMethod: (OTA_CHANNELS.has(b.channel) ? "ota_collect" : "cash") as PaymentMethod,
+    bookingSource: sourceForPmsChannel(b.channel),
+    paymentMethod: paymentForPmsChannel(b.channel),
   };
 }
 
