@@ -89,6 +89,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<PmsResult<T>> 
     | ({ ok: boolean; code?: PmsErrorCode; message?: string; balance?: number } & T)
     | null;
   if (body?.ok) return body as { ok: true } & T;
+  // No such endpoint at all (not a "booking not found" answer, which comes with a JSON body):
+  // the PMS site is older than this Work OS and needs its latest version deployed.
+  if (res.status === 404 && !body?.code) {
+    return { ok: false, code: "pms_error", message: `The PMS doesn't have ${path} yet. Its latest update needs to be merged and deployed.` };
+  }
   const code: PmsErrorCode = body?.code ?? (res.status === 401 ? "unauthorized" : "pms_error");
   return { ok: false, code, message: body?.message || MESSAGES[code] || MESSAGES.pms_error!, balance: body?.balance };
 }

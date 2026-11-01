@@ -1,6 +1,7 @@
 import { Topbar } from "@/components/Topbar";
 import { HostelStayRow } from "@/components/HostelStayRow";
 import { listHostelStays } from "./actions";
+import { syncHostelLog } from "@/app/clock/hostel-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,8 @@ export default async function HostelPage({
   const sp = await searchParams;
   const branch = sp.branch || "all";
 
+  // sync with the PMS first (and say so if it can't), then load the log
+  const { warning: syncWarning } = await syncHostelLog();
   const result = await listHostelStays();
   const stays = Array.isArray(result) ? result : [];
   const loadError = Array.isArray(result) ? null : result.error;
@@ -29,6 +32,14 @@ export default async function HostelPage({
             style={{ background: "var(--critical-soft)", color: "var(--critical)" }}
           >
             {loadError}
+          </div>
+        )}
+        {syncWarning && (
+          <div
+            className="rounded-[9px] px-3 py-2.5 text-[13px] font-medium mb-4"
+            style={{ background: "var(--warning-soft)", color: "var(--warning)" }}
+          >
+            PMS not in sync: {syncWarning}
           </div>
         )}
 

@@ -31,6 +31,7 @@ const WINDOW_DAYS = 7; // stays checked out longer ago than this are history and
 const MAX_RETRIES_PER_SYNC = 5;
 const MIN_GAP_MS = 15_000; // several screens loading at once share one sync
 const lastSync = new Map<string, number>();
+const lastWarning = new Map<string, string | null>();
 
 export type PushResult = { ok: true; bookingId: string } | { ok: false; error: string; balanceDue?: number };
 
@@ -126,10 +127,23 @@ export async function pushStayToPms(
   return { ok: true, bookingId };
 }
 
-/** Where guests checked in on the PMS go on the log: the Sathorn branch (the hostel's), else wherever recent stays are. */
-async function hostelBranchId(admin: Admin, orgId: string, stays: StayRow[]): Promise<string | null> {
+/**
+ * Where guests checked in on the PMS go on the log: the branch the desk itself logs hostel guests
+ * under (that of the latest check-in done on Work OS), so they show on the same "your branch"
+ * list as everyone else; with no such check-in yet, the Sathorn branch.
+ */
+async function hostelBranchId(admin: Admin, orgId: string): Promise<string | null> {
+  const { data: latest } = await admin
+    .from("hostel_stays")
+    .select("branch_id")
+    .eq("org_id", orgId)
+    .eq("origin", "workos")
+    .order("checked_in_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latest?.branch_id) return latest.branch_id as string;
   const { data } = await admin.from("branches").select("id").eq("org_id", orgId).eq("slug", "sathorn").maybeSingle();
-  return (data?.id as string | undefined) ?? stays[0]?.branch_id ?? null;
+  return (data?.id as string | undefined) ?? null;
 }
 
 async function deleteStays(admin: Admin, orgId: string, stays: StayRow[]) {
@@ -205,21 +219,36 @@ function stayFromPms(orgId: string, branchId: string, b: PmsSyncBooking) {
 /**
  * Bring the hostel log in line with the PMS (see the top of this file).
  * Never throws; if the PMS can't be reached nothing changes.
+ *
+ * @returns null when the log is in sync (or the PMS link isn't set up), otherwise a short
+ *          explanation for staff of why it couldn't be -- shown above the log so a sync that
+ *          can't run is never silent.
  */
-export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { force?: boolean } = {}): Promise<void> {
+export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { force?: boolean } = {}): Promise<string | null> {
+  const last = lastSync.get(orgId) ?? 0;
+  if (!opts.force && Date.now() - last < MIN_GAP_MS) return lastWarning.get(orgId) ?? null;
+  lastSync.set(orgId, Date.now());
+  const warning = await runSync(admin, orgId);
+  lastWarning.set(orgId, warning);
+  if (warning) console.error("[hostel-pms-sync]", warning);
+  return warning;
+}
+
+async function runSync(admin: Admin, orgId: string): Promise<string | null> {
   try {
-    const last = lastSync.get(orgId) ?? 0;
-    if (!opts.force && Date.now() - last < MIN_GAP_MS) return;
-    lastSync.set(orgId, Date.now());
+    let writeError: string | null = null; // first failed write, reported at the end
+    const noteError = (e: { message: string } | null) => { if (e && !writeError) writeError = e.message; };
 
     const since = new Date(Date.now() - WINDOW_DAYS * 864e5).toISOString();
-    const { data } = await admin
+    const { data, error: loadError } = await admin
       .from("hostel_stays")
       .select(STAY_COLUMNS)
       .eq("org_id", orgId)
       .or(`checked_out_at.is.null,checked_out_at.gt.${since}`)
       .order("checked_in_at", { ascending: false })
       .limit(300);
+    // e.g. migration 0044 not run yet (no "origin" column)
+    if (loadError) return `Couldn't sync the hostel log with the PMS: ${loadError.message}`;
     const stays = (data ?? []) as StayRow[];
 
     // 1. Changes made here that haven't reached the PMS yet: try again (no money prompts here --
@@ -237,7 +266,7 @@ export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { for
     // 2. What the PMS has now.
     const linked = stays.filter((s) => s.pms_booking_id);
     const pms = await pmsSync([...new Set(linked.map((s) => s.pms_booking_id as string))]);
-    if (!pms.ok) return;
+    if (!pms.ok) return pms.code === "not_configured" ? null : `Couldn't sync with the PMS: ${pms.message}`;
     const byBooking = new Map(pms.bookings.map((b) => [b.id, b]));
 
     // 3. Linked stays follow the PMS.
@@ -255,7 +284,8 @@ export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { for
       }
       const patch = patchFromPms(s, b);
       if (Object.keys(patch).length) {
-        await admin.from("hostel_stays").update({ ...patch, pms_synced_at: new Date().toISOString() }).eq("id", s.id);
+        const { error } = await admin.from("hostel_stays").update({ ...patch, pms_synced_at: new Date().toISOString() }).eq("id", s.id);
+        noteError(error);
       }
     }
     await deleteStays(admin, orgId, toDelete);
@@ -264,7 +294,7 @@ export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { for
     const fresh = pms.bookings.filter(
       (b) => (b.status === "checked_in" || b.status === "checked_out") && !linked.some((s) => s.pms_booking_id === b.id)
     );
-    if (fresh.length === 0) return;
+    if (fresh.length === 0) return writeError ? `Couldn't copy every PMS change onto the log: ${writeError}` : null;
     // linked to a stay outside the window we loaded?
     const { data: known } = await admin
       .from("hostel_stays")
@@ -275,8 +305,8 @@ export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { for
         fresh.map((b) => b.id)
       );
     const knownIds = new Set((known ?? []).map((k) => k.pms_booking_id as string));
-    const branchId = await hostelBranchId(admin, orgId, stays);
-    if (!branchId) return;
+    const branchId = await hostelBranchId(admin, orgId);
+    if (!branchId) return "Couldn't add PMS guests to the log: no hostel branch found.";
 
     for (const b of fresh) {
       if (knownIds.has(b.id)) continue;
@@ -285,17 +315,20 @@ export async function syncHostelWithPms(admin: Admin, orgId: string, opts: { for
         (s) => !s.pms_booking_id && !s.pms_sync_error && !s.checked_out_at && b.guestName && norm(s.guest_name) === norm(b.guestName)
       );
       if (twin && b.status === "checked_in") {
-        await admin
+        const { error } = await admin
           .from("hostel_stays")
           .update({ ...patchFromPms(twin, b), pms_booking_id: b.id, pms_ref: b.ref, pms_synced_at: new Date().toISOString() })
           .eq("id", twin.id);
+        noteError(error);
         twin.pms_booking_id = b.id;
         continue;
       }
-      // A unique index on pms_booking_id stops two screens adding the same guest twice.
-      await admin.from("hostel_stays").insert(stayFromPms(orgId, branchId, b));
+      // A unique index on pms_booking_id stops two screens adding the same guest twice (23505: fine).
+      const { error } = await admin.from("hostel_stays").insert(stayFromPms(orgId, branchId, b));
+      if (error && (error as { code?: string }).code !== "23505") noteError(error);
     }
+    return writeError ? `Couldn't copy every PMS guest onto the log: ${writeError}` : null;
   } catch (e) {
-    console.error("[hostel-pms-sync]", e);
+    return `Couldn't sync with the PMS: ${e instanceof Error ? e.message : String(e)}`;
   }
 }

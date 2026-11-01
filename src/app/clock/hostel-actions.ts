@@ -392,6 +392,18 @@ export async function listPmsFrontDesk(): Promise<PmsFrontDeskView> {
 }
 
 /**
+ * Sync the hostel log with the PMS now and say whether it worked. The log
+ * screens call this before loading the list, and show the warning (PMS
+ * unreachable, PMS needs updating, database step missing, ...) above it so
+ * a sync that can't run is never silent. null = in sync.
+ */
+export async function syncHostelLog(): Promise<{ warning: string | null }> {
+  const guard = await requireEmployeeOrManager("hostel.sync");
+  if (!guard.ok) return { warning: null };
+  return { warning: await syncHostelWithPms(createAdminClient(), guard.orgId) };
+}
+
+/**
  * Add passport photo(s) and/or the room key photo to a stay that doesn't
  * have them -- mostly guests checked in on a PMS tablet, who reach the log
  * with no photos. Passport photos are added to any already there (up to

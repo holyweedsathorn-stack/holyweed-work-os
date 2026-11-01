@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { listMyBranchHostelStays, type MyBranchHostelStay } from "@/app/clock/hostel-actions";
+import { listMyBranchHostelStays, syncHostelLog, type MyBranchHostelStay } from "@/app/clock/hostel-actions";
 import { HostelStayRow } from "@/components/HostelStayRow";
 
 /**
@@ -17,13 +17,17 @@ import { HostelStayRow } from "@/components/HostelStayRow";
  */
 export function HostelStaysFeed() {
   const [state, setState] = useState<{ stays: MyBranchHostelStay[] } | { error: string } | null>(null);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     load();
     async function load() {
+      // sync with the PMS first, so the list below already has its check-ins / -outs
+      const sync = await syncHostelLog().catch(() => null);
       const result = await listMyBranchHostelStays().catch(() => null);
       if (!alive || !result) return;
+      setSyncWarning(sync?.warning ?? null);
       setState("error" in result ? { error: result.error } : { stays: result });
     }
     // Re-read every minute and when the screen comes back into view, so a
@@ -61,15 +65,27 @@ export function HostelStaysFeed() {
     );
   }
 
+  const banner = syncWarning ? (
+    <div
+      className="rounded-[9px] px-3 py-2.5 text-[12.5px] font-medium"
+      style={{ background: "var(--warning-soft)", color: "var(--warning)" }}
+    >
+      PMS not in sync: {syncWarning}
+    </div>
+  ) : null;
+
   const result = state.stays;
   const current = result.filter((s) => !s.checkedOutAt);
   const history = result.filter((s) => s.checkedOutAt);
 
   if (result.length === 0) {
     return (
-      <div className="card">
-        <h2 className="font-display text-[15px] font-semibold mb-1">Hostel log — your branch</h2>
-        <p className="text-[13px] text-inkMuted m-0">No guests checked in yet.</p>
+      <div className="flex flex-col gap-2">
+        {banner}
+        <div className="card">
+          <h2 className="font-display text-[15px] font-semibold mb-1">Hostel log — your branch</h2>
+          <p className="text-[13px] text-inkMuted m-0">No guests checked in yet.</p>
+        </div>
       </div>
     );
   }
@@ -77,6 +93,7 @@ export function HostelStaysFeed() {
   return (
     <div className="flex flex-col gap-2">
       <h2 className="font-display text-[15px] font-semibold px-0.5">Hostel log — your branch</h2>
+      {banner}
 
       {current.length > 0 && (
         <div className="card">
