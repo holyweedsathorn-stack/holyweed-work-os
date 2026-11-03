@@ -32,6 +32,7 @@ const nextConfig = {
   // as the chromium binary above, same fix: tell the tracer explicitly.
   outputFileTracingIncludes: {
     "/api/cron/silom-sync": ["./node_modules/@sparticuz/chromium/bin/**"],
+    "/api/report-pdf": ["./node_modules/@sparticuz/chromium/bin/**"],
     "/reconciliation": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
   },
 };
