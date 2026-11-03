@@ -26,7 +26,6 @@ function toPrefill(b: PmsBooking): CheckinPrefill {
 function fmtDay(d: string) {
   return new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
-const baht = (n: number) => `฿${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 /**
  * Hostel section of the clock screen: bookings due to check in today,
@@ -121,13 +120,6 @@ export function PmsFrontDesk() {
                         </div>
                         <div className="text-[11.5px] text-inkMuted">
                           {b.unit.label} · {fmtDay(b.checkIn)} → {fmtDay(b.checkOut)} · {b.channelLabel || "—"} · #{b.ref}
-                        </div>
-                        <div className="flex gap-1.5 mt-1 flex-wrap">
-                          {b.balance > 0 && (
-                            <span className="chip" style={{ background: "var(--critical-soft)", color: "var(--critical)" }}>
-                              Owes {baht(b.balance)}
-                            </span>
-                          )}
                         </div>
                       </div>
                       <button
