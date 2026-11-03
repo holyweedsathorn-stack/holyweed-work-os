@@ -26,11 +26,11 @@ function toPrefill(b: PmsBooking): CheckinPrefill {
 function fmtDay(d: string) {
   return new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
-const baht = (n: number) => `฿${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 /**
- * Hostel section of the clock screen: today's arrivals and who's due out,
- * straight from the Holy Hostel PMS. Tapping Check in opens the usual
+ * Hostel section of the clock screen: bookings due to check in today,
+ * straight from the Holy Hostel PMS (nothing else -- no late arrivals from
+ * earlier days, no in-house or due-out guests). Tapping Check in opens the usual
  * check-in form filled in from the booking; submitting it also marks the
  * booking checked in on the PMS. Without the PMS link set up, this is just
  * the plain check-in form, same as before.
@@ -69,7 +69,9 @@ export function PmsFrontDesk() {
 
   if (view && !view.ok && view.code === "not_configured") return form;
 
-  const dueOut = view?.ok ? view.inHouse.filter((b) => b.dueOut) : [];
+  // Only bookings due to arrive today: no late arrivals from earlier days,
+  // no in-house or due-out guests.
+  const arrivals = view?.ok ? view.arrivals.filter((b) => !b.late) : [];
 
   return (
     <>
@@ -78,7 +80,7 @@ export function PmsFrontDesk() {
           <h2 className="font-display text-[15px] font-semibold">Today in the PMS</h2>
           {view?.ok && (
             <span className="text-[12px] text-inkMuted">
-              {view.arrivals.length} to arrive · {view.inHouse.length} in house
+              {arrivals.length} to arrive
             </span>
           )}
         </div>
@@ -101,11 +103,11 @@ export function PmsFrontDesk() {
           <div className="flex flex-col gap-3">
             <div>
               <div className="text-[12px] font-semibold text-inkMuted mb-2">Arriving</div>
-              {view.arrivals.length === 0 ? (
+              {arrivals.length === 0 ? (
                 <p className="text-[13px] text-inkMuted m-0">No arrivals left today.</p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {view.arrivals.map((b) => (
+                  {arrivals.map((b) => (
                     <div
                       key={b.id}
                       className="rounded-[11px] p-3 flex items-center gap-3"
@@ -118,18 +120,6 @@ export function PmsFrontDesk() {
                         </div>
                         <div className="text-[11.5px] text-inkMuted">
                           {b.unit.label} · {fmtDay(b.checkIn)} → {fmtDay(b.checkOut)} · {b.channelLabel || "—"} · #{b.ref}
-                        </div>
-                        <div className="flex gap-1.5 mt-1 flex-wrap">
-                          {b.late && (
-                            <span className="chip" style={{ background: "var(--warning-soft)", color: "var(--warning)" }}>
-                              Late, due {fmtDay(b.checkIn)}
-                            </span>
-                          )}
-                          {b.balance > 0 && (
-                            <span className="chip" style={{ background: "var(--critical-soft)", color: "var(--critical)" }}>
-                              Owes {baht(b.balance)}
-                            </span>
-                          )}
                         </div>
                       </div>
                       <button
@@ -146,28 +136,6 @@ export function PmsFrontDesk() {
                 </div>
               )}
             </div>
-
-            {dueOut.length > 0 && (
-              <div>
-                <div className="text-[12px] font-semibold text-inkMuted mb-2">Due out</div>
-                <div className="flex flex-col gap-1.5">
-                  {dueOut.map((b) => (
-                    <div key={b.id} className="text-[12.5px] flex items-baseline gap-2 flex-wrap">
-                      <span className="font-semibold">{b.guestName || "Guest"}</span>
-                      <span className="text-inkMuted">{b.unit.label}</span>
-                      {b.balance > 0 && (
-                        <span className="chip" style={{ background: "var(--critical-soft)", color: "var(--critical)" }}>
-                          Owes {baht(b.balance)}
-                        </span>
-                      )}
-                      <span className="text-[11.5px] text-inkMuted">
-                        {b.inLog ? "Check out from the log below" : "Checked in on the PMS: check out there"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
