@@ -128,6 +128,12 @@ h1, h2, h3 { text-wrap: balance; }
    --------------------------------------------------------------------------- */
 .print-only { display: none; }
 
+/* Row tints on the Monthly report's revenue table: light green for the
+   card / PromptPay / delivery breakdown, light yellow for hostel income.
+   Translucent so they read on both light and dark surfaces. */
+.row-tint-new { background: rgba(35, 122, 74, 0.08); }
+.row-tint-hostel { background: rgba(217, 174, 78, 0.16); }
+
 @media print {
   @page { margin: 14mm; size: A4 portrait; }
 
@@ -153,6 +159,16 @@ h1, h2, h3 { text-wrap: balance; }
   h3 { break-after: avoid; }
   table { break-inside: auto; }
   tr { break-inside: avoid; }
+
+  /* Browsers drop backgrounds when printing unless told otherwise; solid
+     colours on white paper so the tints survive "Save as PDF". */
+  .row-tint-new,
+  .row-tint-hostel {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .row-tint-new { background: #eaf4ee; }
+  .row-tint-hostel { background: #fbf3df; }
 }
 
 /* ---------------------------------------------------------------------------
