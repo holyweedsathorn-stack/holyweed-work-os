@@ -24,6 +24,21 @@ export type SalesTotals = {
   cash: number;
   /** Card + PromptPay + delivery-app payments, which settle straight to the bank. */
   electronic: number;
+  /** The three parts of `electronic`, per Silom's Credit/PromptPay/Delivery columns. */
+  card: number;
+  promptpay: number;
+  delivery: number;
+  /**
+   * Hostel income from the check-in log (stays checked in this month, plus
+   * extensions logged this month). Informational only: it is NOT part of
+   * netRevenue, grossProfit or anything derived from them.
+   */
+  hostelIncome: number;
+  hostelCash: number;
+  hostelOtaCollect: number;
+  hostelBankTransfer: number;
+  /** Extension amounts logged with no payment method. */
+  hostelMethodUnknown: number;
 };
 
 export type BranchSales = SalesTotals & {
@@ -111,6 +126,8 @@ export type MonthReport = {
   operatingTotal: number;
   netProfit: number;
   cashBank: CashBank;
+  /** Stays checked in this month with no amount recorded. */
+  hostelStaysNoAmount: number;
 };
 
 export type CashBank = {
@@ -192,6 +209,14 @@ const emptyTotals = (): SalesTotals => ({
   daysWithSales: 0,
   cash: 0,
   electronic: 0,
+  card: 0,
+  promptpay: 0,
+  delivery: 0,
+  hostelIncome: 0,
+  hostelCash: 0,
+  hostelOtaCollect: 0,
+  hostelBankTransfer: 0,
+  hostelMethodUnknown: 0,
 });
 
 export type BranchRow = { id: string; name: string; slug: string };
@@ -215,6 +240,16 @@ export type ExpenseRow = {
   category: string;
   amount: unknown;
 };
+/**
+ * A hostel stay checked in during the month, or an extension logged during
+ * the month. The caller filters by month (Asia/Bangkok); this only sums.
+ */
+export type HostelPaymentRow = {
+  branch_id: string;
+  amount_thb: unknown;
+  payment_method: string | null;
+};
+
 export type PayrollInput = {
   employeeId: string;
   name: string;
@@ -231,6 +266,8 @@ export function buildMonthReport(opts: {
   expenses: ExpenseRow[];
   payroll: PayrollInput[];
   fixedCosts?: FixedCostInput[];
+  hostelStays?: HostelPaymentRow[];
+  hostelExtensions?: HostelPaymentRow[];
   today?: string;
 }): MonthReport {
   const { month, branches, sales, expenses, payroll } = opts;
@@ -275,8 +312,36 @@ export function buildMonthReport(opts: {
       daysMissingBreakdown += 1;
     } else {
       t.cash += n(row.cash);
+      t.card += n(row.card);
+      t.promptpay += n(row.promptpay);
+      t.delivery += n(row.delivery);
       t.electronic += n(row.card) + n(row.promptpay) + n(row.delivery);
     }
+  }
+
+  // ------------------------------------------------------- hostel
+  // From the check-in log, kept apart from the POS figures: it is shown for
+  // information and never feeds net revenue or profit.
+  let hostelStaysNoAmount = 0;
+  const addHostel = (row: HostelPaymentRow) => {
+    const t = byBranch.get(row.branch_id);
+    if (!t) return;
+    const amount = n(row.amount_thb);
+    t.hostelIncome += amount;
+    if (row.payment_method === "cash") t.hostelCash += amount;
+    else if (row.payment_method === "ota_collect") t.hostelOtaCollect += amount;
+    else if (row.payment_method === "bank_transfer") t.hostelBankTransfer += amount;
+    else t.hostelMethodUnknown += amount;
+  };
+  for (const stay of opts.hostelStays ?? []) {
+    if (stay.amount_thb == null) {
+      if (byBranch.has(stay.branch_id)) hostelStaysNoAmount += 1;
+      continue;
+    }
+    addHostel(stay);
+  }
+  for (const ext of opts.hostelExtensions ?? []) {
+    if (ext.amount_thb != null) addHostel(ext);
   }
 
   const branchSales = [...byBranch.values()];
@@ -291,6 +356,14 @@ export function buildMonthReport(opts: {
     a.bills += b.bills;
     a.cash += b.cash;
     a.electronic += b.electronic;
+    a.card += b.card;
+    a.promptpay += b.promptpay;
+    a.delivery += b.delivery;
+    a.hostelIncome += b.hostelIncome;
+    a.hostelCash += b.hostelCash;
+    a.hostelOtaCollect += b.hostelOtaCollect;
+    a.hostelBankTransfer += b.hostelBankTransfer;
+    a.hostelMethodUnknown += b.hostelMethodUnknown;
     return a;
   }, emptyTotals());
   combined.daysWithSales = Math.max(0, ...branchSales.map((b) => b.daysWithSales));
@@ -398,5 +471,6 @@ export function buildMonthReport(opts: {
     operatingTotal,
     netProfit: combined.grossProfit - operatingTotal,
     cashBank,
+    hostelStaysNoAmount,
   };
 }

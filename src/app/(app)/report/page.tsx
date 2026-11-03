@@ -5,7 +5,7 @@ import { MonthPicker } from "@/components/MonthPicker";
 import { PayrollEditor } from "@/components/PayrollEditor";
 import { MonthNote } from "@/components/MonthNote";
 import { FixedCostsEditor } from "@/components/FixedCostsEditor";
-import { fmtTHB, bangkokMonth, type Branch, type Employee } from "@/lib/types";
+import { fmtTHB, bangkokMonth, addDays, type Branch, type Employee } from "@/lib/types";
 import {
   buildMonthReport,
   monthBounds,
@@ -30,6 +30,9 @@ export default async function ReportPage({
   const sp = await searchParams;
   const month = sp.month && MONTH.test(sp.month) ? sp.month : bangkokMonth();
   const { from, to } = monthBounds(month);
+  // Hostel check-ins are timestamps; the month runs midnight to midnight in Bangkok.
+  const monthStartBKK = `${from}T00:00:00+07:00`;
+  const nextMonthStartBKK = `${addDays(to, 1)}T00:00:00+07:00`;
   const supabase = await createClient();
 
   const [
@@ -42,6 +45,8 @@ export default async function ReportPage({
     { data: note },
     { data: fixedThis },
     { data: fixedPrior },
+    { data: hostelStays },
+    { data: hostelExtensions },
   ] = await Promise.all([
     supabase.from("branches").select("*").order("name").returns<Branch[]>(),
     supabase.from("employees").select("*").order("full_name").returns<Employee[]>(),
@@ -72,6 +77,17 @@ export default async function ReportPage({
       .select("*")
       .lt("month", month)
       .order("month", { ascending: false }),
+    supabase
+      .from("hostel_stays")
+      .select("branch_id, amount_thb, payment_method")
+      .gte("checked_in_at", monthStartBKK)
+      .lt("checked_in_at", nextMonthStartBKK),
+    // Extensions have no date of their own beyond when they were logged.
+    supabase
+      .from("hostel_stay_extensions")
+      .select("branch_id, amount_thb, payment_method")
+      .gte("created_at", monthStartBKK)
+      .lt("created_at", nextMonthStartBKK),
   ]);
 
   const branchName = new Map((branches ?? []).map((b) => [b.id, b.name]));
@@ -137,6 +153,8 @@ export default async function ReportPage({
     expenses: (expenses ?? []) as any[],
     payroll,
     fixedCosts,
+    hostelStays: (hostelStays ?? []) as any[],
+    hostelExtensions: (hostelExtensions ?? []) as any[],
   });
 
   const cols = [...report.branches, null]; // null = the Combined column
@@ -147,17 +165,46 @@ export default async function ReportPage({
   const metric = (
     label: string,
     pick: (t: (typeof report.branches)[number] | typeof report.combined) => number,
-    opts: { negative?: boolean; strong?: boolean; money?: boolean } = {}
+    opts: {
+      negative?: boolean;
+      strong?: boolean;
+      money?: boolean;
+      /** Row tint: "new" = light green, "hostel" = light yellow. */
+      tint?: "new" | "hostel";
+      /** Small indented sub-row. */
+      sub?: boolean;
+      topRule?: boolean;
+    } = {}
   ) => (
-    <tr key={label} style={rowLine} className={opts.strong ? "font-semibold" : undefined}>
-      <td className="py-2 px-2.5 text-[13px]">{label}</td>
+    <tr
+      key={label}
+      style={opts.topRule ? { borderTop: "2px solid var(--line-strong)" } : rowLine}
+      className={
+        [
+          opts.strong ? "font-semibold" : "",
+          opts.tint === "new" ? "row-tint-new" : "",
+          opts.tint === "hostel" ? "row-tint-hostel" : "",
+        ]
+          .filter(Boolean)
+          .join(" ") || undefined
+      }
+    >
+      <td
+        className={
+          opts.sub ? "py-1 pl-6 pr-2.5 text-[12px] text-inkMuted" : "py-2 px-2.5 text-[13px]"
+        }
+      >
+        {label}
+      </td>
       {cols.map((c, i) => {
         const v = pick(c ?? report.combined);
         return (
           <td
             key={i}
-            className={`${td} text-[13px]`}
-            style={c === null ? { background: "var(--surface-2)" } : undefined}
+            className={
+              opts.sub ? `${td} py-1 text-[12px] text-inkMuted` : `${td} text-[13px]`
+            }
+            style={c === null && !opts.tint ? { background: "var(--surface-2)" } : undefined}
           >
             {opts.money === false
               ? Math.round(v).toLocaleString("en-US")
@@ -240,13 +287,50 @@ export default async function ReportPage({
               {metric("Bills", (t) => t.bills, { money: false })}
               {metric("Days with sales recorded", (t) => t.daysWithSales, { money: false })}
               {metric("Cash", (t) => t.cash)}
-              {metric("Card / PromptPay / delivery (bank)", (t) => t.electronic)}
+              {metric("Credit card", (t) => t.card, { tint: "new" })}
+              {metric("PromptPay", (t) => t.promptpay, { tint: "new" })}
+              {metric("Delivery apps", (t) => t.delivery, { tint: "new" })}
+              {metric("Bank total", (t) => t.electronic, { tint: "new", strong: true })}
+
+              {metric("Hostel income (check-in log)", (t) => t.hostelIncome, {
+                tint: "hostel",
+                strong: true,
+                topRule: true,
+              })}
+              {metric("Paid in cash", (t) => t.hostelCash, { tint: "hostel", sub: true })}
+              {metric("Booking site collects", (t) => t.hostelOtaCollect, {
+                tint: "hostel",
+                sub: true,
+              })}
+              {metric("Bank transfer", (t) => t.hostelBankTransfer, {
+                tint: "hostel",
+                sub: true,
+              })}
+              {report.combined.hostelMethodUnknown > 0 &&
+                metric("Payment method not recorded", (t) => t.hostelMethodUnknown, {
+                  tint: "hostel",
+                  sub: true,
+                })}
             </tbody>
           </table>
         </div>
         <p className="text-[11.5px] text-inkMuted mt-2">
           Gross profit is the figure Silom reports. It has never reconciled exactly to revenue
           minus cost — worth confirming with Silom or your accountant what it includes.
+        </p>
+        <p className="text-[11.5px] text-inkMuted mt-1.5">
+          Hostel income is for information only. It comes from the check-in log (stays checked in
+          this month, plus extensions logged this month) and is not included in net revenue, gross
+          profit or net profit.
+          {report.hostelStaysNoAmount > 0 && (
+            <>
+              {" "}
+              <b style={{ color: "var(--critical)" }}>
+                {report.hostelStaysNoAmount} stay{report.hostelStaysNoAmount === 1 ? " has" : "s have"}{" "}
+                no amount recorded.
+              </b>
+            </>
+          )}
         </p>
 
         {/* --------------------------------------------- payroll -------- */}
