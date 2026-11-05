@@ -1,6 +1,6 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { paymentForPmsChannel, roomForPmsUnit, sourceForPmsChannel } from "@/lib/hostel-rooms";
-import { pmsSetStatus, pmsSync, pmsWalkIn, type PmsSyncBooking } from "@/lib/pms";
+import { pmsCancel, pmsSetStatus, pmsSync, pmsWalkIn, type PmsSyncBooking } from "@/lib/pms";
 
 /**
  * Keeps the hostel log and the Holy Hostel PMS the same, both ways.
@@ -146,8 +146,9 @@ async function hostelBranchId(admin: Admin, orgId: string): Promise<string | nul
   return (data?.id as string | undefined) ?? null;
 }
 
-async function deleteStays(admin: Admin, orgId: string, stays: StayRow[]) {
-  if (stays.length === 0) return;
+/** Delete log entries and their photos. Returns the database error, if any. */
+async function deleteStays(admin: Admin, orgId: string, stays: StayRow[]): Promise<string | null> {
+  if (stays.length === 0) return null;
   const { error } = await admin
     .from("hostel_stays")
     .delete()
@@ -156,9 +157,50 @@ async function deleteStays(admin: Admin, orgId: string, stays: StayRow[]) {
       "id",
       stays.map((s) => s.id)
     );
-  if (error) return;
+  if (error) return error.message;
   const photos = stays.flatMap((s) => [...(s.passport_photo_paths ?? []), ...(s.room_key_photo_path ? [s.room_key_photo_path] : [])]);
   if (photos.length) await admin.storage.from(BUCKET).remove(photos);
+  return null;
+}
+
+export type CancelResult = { ok: true } | { ok: false; error: string; incomeCollected?: number };
+
+/**
+ * "Cancel booking" on the hostel log: cancel the PMS booking first -- exactly like the PMS's own
+ * Cancel booking (red, crossed out, payments voided, room freed) -- then take the guest off the log,
+ * the same as a cancellation made in the PMS does. If the PMS refuses or can't be reached nothing
+ * is changed here either and the error is returned, so the two never disagree. Money already
+ * collected comes back as incomeCollected for staff to confirm (then call again with allowIncome).
+ */
+export async function cancelStay(
+  admin: Admin,
+  orgId: string,
+  stayId: string,
+  reason: string,
+  staffName: string,
+  allowIncome = false
+): Promise<CancelResult> {
+  const why = reason.trim().slice(0, 200);
+  if (!why) return { ok: false, error: "Enter a reason to cancel the booking." };
+  const { data } = await admin.from("hostel_stays").select(STAY_COLUMNS).eq("id", stayId).eq("org_id", orgId).maybeSingle();
+  const stay = data as StayRow | null;
+  if (!stay) return { ok: false, error: "Guest record not found." };
+
+  // The linked booking -- or, for a hand check-in whose link wasn't saved, the walk-in booking the PMS
+  // made for it (keyed by the stay id, see api/workos/walk-in.js on the PMS).
+  const bookingId = stay.pms_booking_id ?? "wos" + stay.id.replace(/-/g, "").toLowerCase();
+  const pms = await pmsCancel({ bookingId, reason: why, staffName, allowIncome });
+  if (!pms.ok) {
+    if (pms.code === "income_collected") return { ok: false, error: pms.message, incomeCollected: pms.amount ?? 0 };
+    // no PMS booking to cancel (not linked, already gone) or no PMS link set up: just the log entry
+    if (pms.code !== "not_found" && pms.code !== "not_configured") {
+      return { ok: false, error: `PMS: ${pms.message} Nothing was cancelled.` };
+    }
+  }
+
+  const error = await deleteStays(admin, orgId, [stay]);
+  if (error) return { ok: false, error: `Cancelled in the PMS, but the log entry wasn't removed (${error}). Reload to try again.` };
+  return { ok: true };
 }
 
 /** Copy the PMS's status, dates, room and name onto a linked stay. Returns the columns that changed. */

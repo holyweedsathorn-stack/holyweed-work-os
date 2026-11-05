@@ -147,17 +147,29 @@ export async function deleteHostelStay(id: string): Promise<{ ok: boolean; error
   const admin = createAdminClient();
   const { data: stay } = await admin
     .from("hostel_stays")
-    .select("passport_photo_paths, room_key_photo_path")
+    .select("passport_photo_paths, room_key_photo_path, pms_booking_id, pms_ref, checked_out_at")
     .eq("id", id)
     .eq("org_id", guard.orgId)
     .maybeSingle();
+
+  // A guest linked to a PMS booking would just come back on the next sync if only the log entry
+  // went: cancel the booking instead (which removes it here too), or in the PMS for a past stay.
+  if (stay?.pms_booking_id) {
+    return {
+      ok: false,
+      error: stay.checked_out_at
+        ? `This guest is linked to PMS booking #${stay.pms_ref ?? ""}. Cancel it in the PMS and it comes off this log by itself.`
+        : `This guest is linked to PMS booking #${stay.pms_ref ?? ""}. Use "Cancel booking" instead, which cancels it in the PMS too.`,
+    };
+  }
 
   const { error } = await admin.from("hostel_stays").delete().eq("id", id).eq("org_id", guard.orgId);
   if (error) return { ok: false, error: error.message };
 
   if (stay) {
     const passportPaths = (stay.passport_photo_paths as string[] | null) ?? [];
-    await admin.storage.from(BUCKET).remove([...passportPaths, stay.room_key_photo_path as string]);
+    const photos = [...passportPaths, ...(stay.room_key_photo_path ? [stay.room_key_photo_path as string] : [])];
+    if (photos.length) await admin.storage.from(BUCKET).remove(photos);
   }
 
   revalidatePath("/hostel");

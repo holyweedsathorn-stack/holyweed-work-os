@@ -9,6 +9,7 @@ import {
   extendHostelStay,
   refreshHostelPhotoUrl,
   retryPmsSync,
+  cancelHostelStay,
   addHostelStayPhotos,
   updateHostelStayNote,
   type PmsAwareResult,
@@ -202,6 +203,35 @@ export function HostelStayRow({
       setExtAmount("");
       setExtPaymentMethod("cash");
       router.refresh();      onChanged?.();
+    });
+  }
+
+  /**
+   * Cancel the booking: in the PMS too (red, crossed out, room freed), and off this log. Asks for a
+   * reason like the PMS does, and asks again before removing money that was already collected.
+   */
+  function cancelBooking() {
+    const reason = prompt(
+      `Cancel ${stay.guestName || roomLabel}'s booking?${stay.pmsRef ? ` It is cancelled in the PMS too (#${stay.pmsRef}) and the room is freed.` : ""}\n\nReason (required):`,
+      ""
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      alert("Enter a reason to cancel the booking.");
+      return;
+    }
+    start(async () => {
+      let res = await cancelHostelStay(stay.id, { reason });
+      if (!res.ok && res.incomeCollected != null) {
+        if (!confirm(`${res.error}\n\nCancel anyway?`)) return;
+        res = await cancelHostelStay(stay.id, { reason, allowIncome: true });
+      }
+      if (!res.ok) {
+        alert(res.error ?? "Something went wrong.");
+        return;
+      }
+      router.refresh();
+      onChanged?.();
     });
   }
 
@@ -489,18 +519,30 @@ export function HostelStayRow({
                 {stay.notes ? "Edit note" : "Add note"}
               </button>
             )}
+            {!stay.checkedOutAt && (
+              <button
+                type="button"
+                disabled={working}
+                onClick={cancelBooking}
+                className="text-[12px] font-semibold ml-auto"
+                style={{ color: "var(--critical)" }}
+              >
+                {working ? "…" : "Cancel booking"}
+              </button>
+            )}
             {showCheckout && !stay.checkedOutAt && (
               <button
                 type="button"
                 disabled={working}
                 onClick={checkOut}
-                className="text-[12px] font-semibold ml-auto"
+                className="text-[12px] font-semibold"
                 style={{ color: "var(--accent)" }}
               >
                 {working ? "…" : "Check out"}
               </button>
             )}
-            {showDelete && (
+            {/* a PMS-linked guest still in house is removed with Cancel booking (which cancels it in the PMS too) */}
+            {showDelete && !(stay.pmsRef && !stay.checkedOutAt) && (
               <button
                 type="button"
                 disabled={working}
