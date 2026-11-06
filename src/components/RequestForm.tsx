@@ -10,6 +10,7 @@ import {
   type Approval,
   type ApprovalKind,
 } from "@/lib/types";
+import { DateInput } from "@/components/DateInput";
 
 const inputClass =
   "w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent";
@@ -158,9 +159,8 @@ export function RequestForm({ mine }: { mine: Approval[] }) {
           {spec.date && (
             <label className="text-[12px] font-semibold text-inkSecondary">
               Which day
-              <input
+              <DateInput
                 name="ref_date"
-                type="date"
                 required
                 className={inputClass + " mt-1.5"}
                 style={inputStyle}

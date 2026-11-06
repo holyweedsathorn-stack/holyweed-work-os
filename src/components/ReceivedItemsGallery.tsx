@@ -1,6 +1,7 @@
 import type { ReceivedItem } from "@/app/(app)/received-items/actions";
 import { ReceivedItemTile } from "@/components/ReceivedItemTile";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { fmtWeekdayDate } from "@/lib/dates";
 
 /** Group key: the item's calendar date in Bangkok, YYYY-MM-DD. */
 function dateKeyBKK(iso: string): string {
@@ -8,13 +9,7 @@ function dateKeyBKK(iso: string): string {
 }
 
 function dateHeaderBKK(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "Asia/Bangkok",
-  });
+  return fmtWeekdayDate(iso, true);
 }
 
 function groupByDate(items: ReceivedItem[]): [string, ReceivedItem[]][] {

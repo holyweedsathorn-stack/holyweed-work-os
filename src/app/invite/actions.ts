@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logRefusal } from "@/lib/guard";
+import { fmtDateTime } from "@/lib/dates";
 
 export type AcceptResult = { ok: true; email: string } | { ok: false; error: string };
 
@@ -41,7 +42,7 @@ export async function acceptInvite(formData: FormData): Promise<AcceptResult> {
       reason: "used_token",
       orgId: invite.org_id,
       actorLabel: `invite for ${invite.full_name}`,
-      detail: `Link already used on ${invite.accepted_at}`,
+      detail: `Link already used on ${fmtDateTime(invite.accepted_at)}`,
     });
     return { ok: false, error: "This invite has already been used. Ask for a new link." };
   }
@@ -51,7 +52,7 @@ export async function acceptInvite(formData: FormData): Promise<AcceptResult> {
       reason: "expired_token",
       orgId: invite.org_id,
       actorLabel: `invite for ${invite.full_name}`,
-      detail: `Link expired on ${invite.expires_at}`,
+      detail: `Link expired on ${fmtDateTime(invite.expires_at)}`,
     });
     return { ok: false, error: "This invite link has expired. Ask for a new one." };
   }

@@ -7,6 +7,7 @@ import {
   uploadMarketingDocument,
   type MarketingDoc,
 } from "@/app/(app)/marketing/actions";
+import { fmtDate as fmtDdMmYyyy } from "@/lib/dates";
 
 const inputClass =
   "w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent";
@@ -17,12 +18,7 @@ const inputStyle = {
 } as const;
 
 function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Bangkok",
-  });
+  return fmtDdMmYyyy(iso);
 }
 
 /**

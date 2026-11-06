@@ -5,6 +5,7 @@ import { listPmsFrontDesk, type PmsFrontDeskView } from "@/app/clock/hostel-acti
 import { HostelCheckinForm, type CheckinPrefill } from "@/components/HostelCheckinForm";
 import { paymentForPmsChannel, roomForPmsUnit, sourceForPmsChannel } from "@/lib/hostel-rooms";
 import type { PmsBooking } from "@/lib/pms";
+import { fmtDate } from "@/lib/dates";
 
 const REFRESH_MS = 60_000;
 
@@ -24,7 +25,7 @@ function toPrefill(b: PmsBooking): CheckinPrefill {
 }
 
 function fmtDay(d: string) {
-  return new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  return fmtDate(d);
 }
 
 /**

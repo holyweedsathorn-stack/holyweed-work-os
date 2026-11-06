@@ -9,6 +9,7 @@ import {
   deleteTask,
 } from "@/app/(app)/tasks/actions";
 import type { Branch, Employee } from "@/lib/types";
+import { DateInput } from "@/components/DateInput";
 
 const inputStyle = { borderColor: "var(--line-strong)", background: "var(--surface)" } as const;
 const inputClass =
@@ -233,7 +234,7 @@ export function TaskManager({
                 </select>
               </Field>
               <Field label="Due (optional)">
-                <input type="date" name="due_date" className={inputClass} style={inputStyle} />
+                <DateInput name="due_date" className={inputClass} style={inputStyle} />
               </Field>
             </div>
             <button
