@@ -7,7 +7,7 @@ import { resolveWorkingBranch } from "@/lib/working-branch";
 import { notifyManagers } from "@/lib/notify";
 import { findHostelRoom } from "@/lib/hostel-rooms";
 import { pmsExtend, pmsFrontDesk, pmsSetStatus, pmsWalkIn, type PmsBooking, type PmsErrorCode } from "@/lib/pms";
-import { bangkokDate, pushStayToPms, syncHostelWithPms } from "@/lib/hostel-pms-sync";
+import { bangkokDate, cancelStay, pushStayToPms, syncHostelWithPms } from "@/lib/hostel-pms-sync";
 
 const BUCKET = "hostel-checkins";
 const SIGNED_URL_TTL = 60 * 10; // 10 minutes, same as the other photo logs.
@@ -348,6 +348,27 @@ export async function retryPmsSync(stayId: string, opts: { allowBalance?: boolea
 
   const res = await pushStayToPms(createAdminClient(), guard.orgId, stayId, guard.actorName, opts.allowBalance === true);
   if (!res.ok) return { ok: false, error: res.error, balanceDue: res.balanceDue };
+
+  revalidatePath("/clock");
+  revalidatePath("/hostel");
+  return { ok: true };
+}
+
+/**
+ * "Cancel booking" on the hostel log: cancels the PMS booking too (red, crossed out, payments voided,
+ * room freed), then takes the guest off the log. If the PMS can't do it, nothing changes and the
+ * error comes back. incomeCollected = money already collected that cancelling would remove from
+ * PMS income: ask staff, then call again with allowIncome.
+ */
+export async function cancelHostelStay(
+  stayId: string,
+  opts: { reason: string; allowIncome?: boolean }
+): Promise<{ ok: true } | { ok: false; error: string; incomeCollected?: number }> {
+  const guard = await requireEmployeeOrManager("hostel.cancelStay");
+  if (!guard.ok) return { ok: false, error: guard.error };
+
+  const res = await cancelStay(createAdminClient(), guard.orgId, stayId, opts.reason, guard.actorName, opts.allowIncome === true);
+  if (!res.ok) return res;
 
   revalidatePath("/clock");
   revalidatePath("/hostel");

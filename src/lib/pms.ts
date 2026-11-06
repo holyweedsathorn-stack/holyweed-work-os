@@ -57,9 +57,10 @@ export type PmsErrorCode =
   | "no_unit"
   | "ambiguous_unit"
   | "bad_request"
+  | "income_collected"
   | "pms_error";
 
-export type PmsResult<T> = ({ ok: true } & T) | { ok: false; code: PmsErrorCode; message: string; balance?: number };
+export type PmsResult<T> = ({ ok: true } & T) | { ok: false; code: PmsErrorCode; message: string; balance?: number; amount?: number };
 
 const MESSAGES: Partial<Record<PmsErrorCode, string>> = {
   not_configured: "The PMS link isn't set up.",
@@ -86,7 +87,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<PmsResult<T>> 
   }
 
   const body = (await res.json().catch(() => null)) as
-    | ({ ok: boolean; code?: PmsErrorCode; message?: string; balance?: number } & T)
+    | ({ ok: boolean; code?: PmsErrorCode; message?: string; balance?: number; amount?: number } & T)
     | null;
   if (body?.ok) return body as { ok: true } & T;
   // No such endpoint at all (not a "booking not found" answer, which comes with a JSON body):
@@ -95,7 +96,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<PmsResult<T>> 
     return { ok: false, code: "pms_error", message: `The PMS doesn't have ${path} yet. Its latest update needs to be merged and deployed.` };
   }
   const code: PmsErrorCode = body?.code ?? (res.status === 401 ? "unauthorized" : "pms_error");
-  return { ok: false, code, message: body?.message || MESSAGES[code] || MESSAGES.pms_error!, balance: body?.balance };
+  return { ok: false, code, message: body?.message || MESSAGES[code] || MESSAGES.pms_error!, balance: body?.balance, amount: body?.amount };
 }
 
 /** Today's arrivals (incl. late ones) and in-house guests, as the PMS sees them. */
@@ -139,6 +140,19 @@ export function pmsExtend(input: {
   staffName: string;
 }): Promise<PmsResult<{ already?: boolean; booking: PmsBooking }>> {
   return call("/api/workos/extend", { method: "POST", body: JSON.stringify(input) });
+}
+
+/**
+ * Cancel a PMS booking ("Cancel booking" on the log), exactly like the PMS's own Cancel booking.
+ * If money was already collected it fails with "income_collected" (amount) unless allowIncome is set.
+ */
+export function pmsCancel(input: {
+  bookingId: string;
+  reason: string;
+  staffName: string;
+  allowIncome?: boolean;
+}): Promise<PmsResult<{ already?: boolean; booking: PmsBooking; incomeRemoved?: number }>> {
+  return call("/api/workos/cancel", { method: "POST", body: JSON.stringify(input) });
 }
 
 /** Current PMS status of these bookings ("cancelled", "checked_in", ...). Bookings the PMS doesn't have are left out. */
