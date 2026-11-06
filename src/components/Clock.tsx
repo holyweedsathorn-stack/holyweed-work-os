@@ -1,21 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { fmtDateTime, fmtWeekdayDate } from "@/lib/dates";
 
 export function Clock() {
   const [label, setLabel] = useState("");
 
   useEffect(() => {
     function tick() {
-      const opts: Intl.DateTimeFormatOptions = {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "Asia/Bangkok",
-      };
-      setLabel("Bangkok · " + new Intl.DateTimeFormat("en-GB", opts).format(new Date()));
+      const now = new Date();
+      setLabel("Bangkok · " + fmtWeekdayDate(now) + " " + fmtDateTime(now).slice(11));
     }
     tick();
     const id = setInterval(tick, 30000);

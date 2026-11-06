@@ -18,6 +18,7 @@ import {
   type ShiftRequirement,
   type ShiftType,
 } from "@/lib/shifts";
+import { fmtDate } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
@@ -110,9 +111,7 @@ export default async function SchedulePage({
     }
   }
 
-  const fmtDay = (iso: string, opts: Intl.DateTimeFormatOptions) =>
-    new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { ...opts, timeZone: "UTC" });
-  const rangeLabel = `${fmtDay(monday, { month: "short", day: "numeric" })} – ${fmtDay(sunday, { day: "numeric", month: "short" })}`;
+  const rangeLabel = `${fmtDate(monday)} – ${fmtDate(sunday)}`;
 
   const weekHref = (m: string) => {
     const p = new URLSearchParams();

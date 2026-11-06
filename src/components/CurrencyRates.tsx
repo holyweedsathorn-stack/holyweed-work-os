@@ -1,4 +1,5 @@
 import { CurrencyConverter, type ConvertibleCurrency } from "./CurrencyConverter";
+import { fmtDate } from "@/lib/dates";
 
 const CURRENCIES: { code: string; label: string; perHundred?: boolean }[] = [
   { code: "USD", label: "US Dollar" },
@@ -60,11 +61,7 @@ export async function CurrencyRates() {
         <h2 className="font-display text-[15px] font-semibold">Exchange rates</h2>
         {data && (
           <span className="text-[11px] text-inkMuted">
-            {new Date(data.updatedAtUtc).toLocaleDateString("en-GB", {
-              day: "2-digit",
-              month: "short",
-              timeZone: "Asia/Bangkok",
-            })}
+            {fmtDate(data.updatedAtUtc)}
           </span>
         )}
       </div>
