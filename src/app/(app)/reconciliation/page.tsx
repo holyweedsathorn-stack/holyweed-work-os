@@ -45,31 +45,60 @@ function comparisonDateFor(t: BankTxnRow): string {
   return hour < OLD_CUTOFF_HOUR ? shiftDate(t.txn_date, -1) : t.txn_date;
 }
 
+// Supabase (PostgREST) returns at most 1000 rows per request, so a bigger
+// result came back silently cut off -- for bank_transactions that dropped
+// the newest rows. fetchAllRows asks for it 1000 rows at a time with
+// .range() until a page comes back short. Every paged query needs a
+// fully deterministic order (ending in the primary key), or a row could
+// land on two pages or on none.
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  what: string,
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    // A failed page would leave the totals quietly short -- the very
+    // problem this exists to fix -- so fail loudly instead.
+    if (error) throw new Error(`Could not load ${what}: ${error.message}`);
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) return rows;
+  }
+}
+
 export default async function ReconciliationPage() {
   const supabase = await createClient();
 
-  const [{ data: branches }, { data: accounts }, { data: allTxns }] = await Promise.all([
+  const [{ data: branches }, { data: accounts }, txns] = await Promise.all([
     supabase.from("branches").select("*").order("name").returns<Branch[]>(),
     supabase.from("bank_accounts").select("id, label").order("created_at"),
-    supabase
-      .from("bank_transactions")
-      .select("id, txn_date, txn_time, amount, direction, balance_after, description, category, branch_id, created_at, line_seq")
-      .order("txn_date")
-      .order("txn_time")
-      // line_seq (not created_at) breaks ties between transactions that
-      // share the same printed minute -- Krungthai's statement has no
-      // seconds, and a whole statement import writes every row in one
-      // batch, so created_at is identical across an entire upload and
-      // can't tell same-minute rows apart. line_seq instead preserves the
-      // exact order the PDF itself prints them in, which is always true
-      // chronological order -- see 0042_bank_transactions_line_seq.sql.
-      // Rows imported before that migration have line_seq = null and
-      // fall back to whatever order Postgres returns them in.
-      .order("line_seq", { ascending: true, nullsFirst: false })
-      .returns<BankTxnRow[]>(),
+    fetchAllRows<BankTxnRow>("bank transactions", (from, to) =>
+      supabase
+        .from("bank_transactions")
+        .select("id, txn_date, txn_time, amount, direction, balance_after, description, category, branch_id, created_at, line_seq")
+        .order("txn_date")
+        .order("txn_time")
+        // line_seq (not created_at) breaks ties between transactions that
+        // share the same printed minute -- Krungthai's statement has no
+        // seconds, and a whole statement import writes every row in one
+        // batch, so created_at is identical across an entire upload and
+        // can't tell same-minute rows apart. line_seq instead preserves the
+        // exact order the PDF itself prints them in, which is always true
+        // chronological order -- see 0042_bank_transactions_line_seq.sql.
+        // Rows imported before that migration have line_seq = null and
+        // fall back to whatever order Postgres returns them in.
+        .order("line_seq", { ascending: true, nullsFirst: false })
+        // Last tie-break only, so paging is stable: rows that tie on all
+        // three keys above (old imports with no line_seq) had no defined
+        // order before either.
+        .order("id")
+        .range(from, to)
+        .returns<BankTxnRow[]>()
+    ),
   ]);
-
-  const txns = allTxns ?? [];
 
   // Group the still-unreviewed inbound transactions by their transaction
   // type (e.g. "Transfer in-PromptPay (MORISD)") so a statement's ~1,000
@@ -108,12 +137,16 @@ export default async function ReconciliationPage() {
 
   let salesRows: { branch_id: string; sale_date: string; promptpay: number | null }[] = [];
   if (minDate && maxDate) {
-    const { data } = await supabase
-      .from("sales_daily")
-      .select("branch_id, sale_date, promptpay")
-      .gte("sale_date", minDate)
-      .lte("sale_date", maxDate);
-    salesRows = data ?? [];
+    salesRows = await fetchAllRows<(typeof salesRows)[number]>("POS sales", (from, to) =>
+      supabase
+        .from("sales_daily")
+        .select("branch_id, sale_date, promptpay")
+        .gte("sale_date", minDate)
+        .lte("sale_date", maxDate)
+        .order("sale_date")
+        .order("id")
+        .range(from, to)
+    );
   }
   // Per-branch POS totals, plus a combined-across-every-branch total per day
   // for comparing against "shared" bank deposits. posSalesByDayCombined is
@@ -139,12 +172,16 @@ export default async function ReconciliationPage() {
   // never a per-branch row.
   let bistroSalesRows: { sale_date: string; promptpay: number }[] = [];
   if (minDate && maxDate) {
-    const { data } = await supabase
-      .from("bistro_sales_daily")
-      .select("sale_date, promptpay")
-      .gte("sale_date", minDate)
-      .lte("sale_date", maxDate);
-    bistroSalesRows = data ?? [];
+    bistroSalesRows = await fetchAllRows<(typeof bistroSalesRows)[number]>("Bistro sales", (from, to) =>
+      supabase
+        .from("bistro_sales_daily")
+        .select("sale_date, promptpay")
+        .gte("sale_date", minDate)
+        .lte("sale_date", maxDate)
+        .order("sale_date")
+        .order("id")
+        .range(from, to)
+    );
   }
   for (const r of bistroSalesRows) {
     posSalesByDayCombined.set(r.sale_date, (posSalesByDayCombined.get(r.sale_date) ?? 0) + Number(r.promptpay));
@@ -196,18 +233,22 @@ export default async function ReconciliationPage() {
 
   let hostelStayRows: { branch_id: string; checked_in_at: string; amount_thb: number | null }[] = [];
   if (minDate && maxDate) {
-    const { data } = await supabase
-      .from("hostel_stays")
-      .select("branch_id, checked_in_at, amount_thb")
-      .eq("payment_method", "bank_transfer")
-      .not("amount_thb", "is", null)
-      // checked_in_at is a timestamp; widen the date filter by a day on
-      // each side so a check-in just before/after local midnight (this
-      // query runs in UTC) isn't dropped at the edge of the statement's
-      // own date range.
-      .gte("checked_in_at", shiftDate(minDate, -1))
-      .lte("checked_in_at", shiftDate(maxDate, 1) + "T23:59:59");
-    hostelStayRows = data ?? [];
+    hostelStayRows = await fetchAllRows<(typeof hostelStayRows)[number]>("hostel stays", (from, to) =>
+      supabase
+        .from("hostel_stays")
+        .select("branch_id, checked_in_at, amount_thb")
+        .eq("payment_method", "bank_transfer")
+        .not("amount_thb", "is", null)
+        // checked_in_at is a timestamp; widen the date filter by a day on
+        // each side so a check-in just before/after local midnight (this
+        // query runs in UTC) isn't dropped at the edge of the statement's
+        // own date range.
+        .gte("checked_in_at", shiftDate(minDate, -1))
+        .lte("checked_in_at", shiftDate(maxDate, 1) + "T23:59:59")
+        .order("checked_in_at")
+        .order("id")
+        .range(from, to)
+    );
   }
   const hostelStaysByDayBranch = new Map<string, number>();
   for (const r of hostelStayRows) {
