@@ -13,6 +13,8 @@ import {
   recentMonths,
   FIXED_COST_CATEGORIES,
   CARRIES_FORWARD,
+  BISTRO_COST_CATEGORIES,
+  type BistroCostInput,
   type PayrollInput,
   type FixedCostInput,
   type FixedCostCategory,
@@ -42,6 +44,8 @@ export default async function ReportPage({
     { data: note },
     { data: fixedThis },
     { data: fixedPrior },
+    { data: bistroThis },
+    { data: bistroPrior },
   ] = await Promise.all([
     supabase.from("branches").select("*").order("name").returns<Branch[]>(),
     supabase.from("employees").select("*").order("full_name").returns<Employee[]>(),
@@ -70,6 +74,13 @@ export default async function ReportPage({
     supabase
       .from("monthly_fixed_costs")
       .select("*")
+      .lt("month", month)
+      .order("month", { ascending: false }),
+    supabase.from("bistro_monthly_costs").select("month, category, amount").eq("month", month),
+    // For carry-forward: Holy Bistro rent from the most recent month set.
+    supabase
+      .from("bistro_monthly_costs")
+      .select("month, category, amount")
       .lt("month", month)
       .order("month", { ascending: false }),
   ]);
@@ -130,6 +141,21 @@ export default async function ReportPage({
     })
   );
 
+  // Holy Bistro has no branch row, so its rent and electricity live in their
+  // own table. Same rule as the branches: rent carries over from the latest
+  // earlier month, electricity starts blank.
+  const bistroSaved = new Map(((bistroThis ?? []) as any[]).map((r) => [r.category as string, r]));
+  const bistroPriorByCat = new Map<string, any>();
+  for (const r of (bistroPrior ?? []) as any[]) {
+    if (!bistroPriorByCat.has(r.category)) bistroPriorByCat.set(r.category, r);
+  }
+  const bistroCosts: BistroCostInput[] = BISTRO_COST_CATEGORIES.map((c) => {
+    const saved = bistroSaved.get(c);
+    const prior = CARRIES_FORWARD[c] ? bistroPriorByCat.get(c) : null;
+    const src = saved ?? prior;
+    return { category: c, amount: Number(src?.amount ?? 0) || 0, carried: !saved && !!prior };
+  });
+
   const report = buildMonthReport({
     month,
     branches: (branches ?? []).map((b) => ({ id: b.id, name: b.name, slug: b.slug })),
@@ -137,6 +163,7 @@ export default async function ReportPage({
     expenses: (expenses ?? []) as any[],
     payroll,
     fixedCosts,
+    bistroCosts,
   });
 
   const cols = [...report.branches, null]; // null = the Combined column
@@ -311,6 +338,7 @@ export default async function ReportPage({
             monthLabel={report.monthLabel}
             branches={(branches ?? []).map((b) => ({ id: b.id, name: b.name }))}
             lines={report.fixedCosts}
+            bistroLines={report.bistroCostsLines}
           />
         </div>
 
@@ -366,19 +394,27 @@ export default async function ReportPage({
               <tr style={rowLine}>
                 <td className="py-2 text-[13px]">
                   Less: rent &amp; utilities
-                  {report.fixedCostsByBranch.length > 1 && (
-                    <span className="text-inkMuted">
-                      {" "}
-                      (
-                      {report.fixedCostsByBranch
-                        .filter((f) => f.total)
-                        .map((f) => `${f.branchName} ${fmtTHB(f.total)}`)
-                        .join(", ")}
-                      )
-                    </span>
-                  )}
+                  {(() => {
+                    const parts = [
+                      ...(report.fixedCostsByBranch.length > 1 || report.bistroCostsTotal
+                        ? report.fixedCostsByBranch
+                            .filter((f) => f.total)
+                            .map((f) => `${f.branchName} ${fmtTHB(f.total)}`)
+                        : []),
+                      ...(report.bistroCostsTotal
+                        ? [
+                            `Holy Bistro rent ${fmtTHB(report.bistroCosts.rent)}, electricity ${fmtTHB(
+                              report.bistroCosts.electricity
+                            )}`,
+                          ]
+                        : []),
+                    ];
+                    return parts.length ? <span className="text-inkMuted"> ({parts.join("; ")})</span> : null;
+                  })()}
                 </td>
-                <td className={`${td} text-[13px]`}>−{fmtTHB(report.fixedCostsTotal)}</td>
+                <td className={`${td} text-[13px]`}>
+                  −{fmtTHB(report.fixedCostsTotal + report.bistroCostsTotal)}
+                </td>
               </tr>
               <tr style={{ borderTop: "2px solid var(--line-strong)" }}>
                 <td className="py-3 text-[15px] font-display font-semibold">
