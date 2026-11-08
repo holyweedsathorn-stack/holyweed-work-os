@@ -9,6 +9,8 @@ import { requireManager } from "@/lib/guard";
 // Phones block window.print(), so the Monthly report's "Download PDF"
 // button asks the server to print the page instead: headless Chromium
 // opens /report as the signed-in user and hands back a real PDF file.
+// "Save PDF" (?layout=document) prints /report-document instead: the same
+// figures as one complete, plain document (see that page).
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -61,6 +63,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const asDocument = req.nextUrl.searchParams.get("layout") === "document";
+  const target = asDocument ? "/report-document" : "/report";
+  const filename = asDocument ? `Holyweed-monthly-report-${month}.pdf` : `Holyweed-report-${month}.pdf`;
+
   const origin = req.nextUrl.origin;
   const cookie = req.headers.get("cookie") ?? "";
 
@@ -91,11 +97,12 @@ export async function GET(req: NextRequest) {
     });
 
     await page.emulateMediaType("print");
-    await page.goto(`${origin}/report?month=${encodeURIComponent(month)}`, {
+    await page.goto(`${origin}${target}?month=${encodeURIComponent(month)}`, {
       waitUntil: "networkidle0",
     });
 
-    if (new URL(page.url()).pathname.startsWith("/login")) {
+    const landed = new URL(page.url()).pathname;
+    if (landed.startsWith("/login")) {
       return NextResponse.json({ ok: false, error: "You are not signed in." }, { status: 401 });
     }
 
@@ -109,7 +116,7 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="Holyweed-report-${month}.pdf"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },
     });
