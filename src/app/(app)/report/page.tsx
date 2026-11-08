@@ -1,24 +1,12 @@
-import { createClient } from "@/lib/supabase/server";
 import { Topbar } from "@/components/Topbar";
 import { KpiCard } from "@/components/KpiCard";
 import { MonthPicker } from "@/components/MonthPicker";
 import { PayrollEditor } from "@/components/PayrollEditor";
 import { MonthNote } from "@/components/MonthNote";
 import { FixedCostsEditor } from "@/components/FixedCostsEditor";
-import { fmtTHB, bangkokMonth, type Branch, type Employee } from "@/lib/types";
-import {
-  buildMonthReport,
-  monthBounds,
-  monthLabel,
-  recentMonths,
-  FIXED_COST_CATEGORIES,
-  CARRIES_FORWARD,
-  BISTRO_COST_CATEGORIES,
-  type BistroCostInput,
-  type PayrollInput,
-  type FixedCostInput,
-  type FixedCostCategory,
-} from "@/lib/report";
+import { fmtTHB, bangkokMonth } from "@/lib/types";
+import { recentMonths } from "@/lib/report";
+import { loadMonthReport } from "@/lib/report-load";
 
 export const dynamic = "force-dynamic";
 
@@ -31,140 +19,7 @@ export default async function ReportPage({
 }) {
   const sp = await searchParams;
   const month = sp.month && MONTH.test(sp.month) ? sp.month : bangkokMonth();
-  const { from, to } = monthBounds(month);
-  const supabase = await createClient();
-
-  const [
-    { data: branches },
-    { data: employees },
-    { data: sales },
-    { data: expenses },
-    { data: payrollThis },
-    { data: payrollPrior },
-    { data: note },
-    { data: fixedThis },
-    { data: fixedPrior },
-    { data: bistroThis },
-    { data: bistroPrior },
-  ] = await Promise.all([
-    supabase.from("branches").select("*").order("name").returns<Branch[]>(),
-    supabase.from("employees").select("*").order("full_name").returns<Employee[]>(),
-    supabase
-      .from("sales_daily")
-      .select(
-        "branch_id, sale_date, revenue, gross_sales, discount, cost, profit, bill_count, cash, card, promptpay, delivery"
-      )
-      .gte("sale_date", from)
-      .lte("sale_date", to),
-    supabase
-      .from("expenses")
-      .select("branch_id, expense_date, category, amount")
-      .gte("expense_date", from)
-      .lte("expense_date", to),
-    supabase.from("payroll_month").select("*").eq("month", month),
-    // For carry-forward: the most recent month already filled in.
-    supabase
-      .from("payroll_month")
-      .select("*")
-      .lt("month", month)
-      .order("month", { ascending: false }),
-    supabase.from("month_notes").select("body").eq("month", month).maybeSingle(),
-    supabase.from("monthly_fixed_costs").select("*").eq("month", month),
-    // For carry-forward: rent and internet from the most recent month set.
-    supabase
-      .from("monthly_fixed_costs")
-      .select("*")
-      .lt("month", month)
-      .order("month", { ascending: false }),
-    supabase.from("bistro_monthly_costs").select("month, category, amount").eq("month", month),
-    // For carry-forward: Holy Bistro rent from the most recent month set.
-    supabase
-      .from("bistro_monthly_costs")
-      .select("month, category, amount")
-      .lt("month", month)
-      .order("month", { ascending: false }),
-  ]);
-
-  const branchName = new Map((branches ?? []).map((b) => [b.id, b.name]));
-  const roster = (employees ?? []).filter((e) => e.active !== false);
-
-  const savedById = new Map((payrollThis ?? []).map((p: any) => [p.employee_id as string, p]));
-
-  // Latest prior figures per person, used when this month is still blank.
-  const priorById = new Map<string, any>();
-  for (const p of (payrollPrior ?? []) as any[]) {
-    if (!priorById.has(p.employee_id)) priorById.set(p.employee_id, p);
-  }
-  const carriedFrom =
-    savedById.size === 0 && (payrollPrior ?? []).length > 0
-      ? monthLabel(((payrollPrior ?? []) as any[])[0].month as string)
-      : null;
-
-  const payroll: PayrollInput[] = roster.map((e) => {
-    const saved = savedById.get(e.id);
-    const prior = priorById.get(e.id);
-    const src = saved ?? prior;
-    return {
-      employeeId: e.id,
-      name: e.full_name,
-      branchName: branchName.get(e.branch_id) ?? "—",
-      base: Number(src?.base_salary ?? 0) || 0,
-      incentive: Number(saved?.incentive ?? 0) || 0, // incentives never carry over
-      carried: !saved && !!prior,
-    };
-  });
-
-  // Rent and internet carry over from the last month they were set; metered
-  // bills start blank so a stale figure can't be saved by accident.
-  const fixedSaved = new Map(
-    ((fixedThis ?? []) as any[]).map((f) => [`${f.branch_id}|${f.category}`, f])
-  );
-  const fixedPriorByKey = new Map<string, any>();
-  for (const f of (fixedPrior ?? []) as any[]) {
-    const k = `${f.branch_id}|${f.category}`;
-    if (!fixedPriorByKey.has(k)) fixedPriorByKey.set(k, f);
-  }
-
-  const fixedCosts: FixedCostInput[] = (branches ?? []).flatMap((b) =>
-    FIXED_COST_CATEGORIES.map((c) => {
-      const k = `${b.id}|${c}`;
-      const saved = fixedSaved.get(k);
-      const prior = CARRIES_FORWARD[c] ? fixedPriorByKey.get(k) : null;
-      const src = saved ?? prior;
-      return {
-        branchId: b.id,
-        branchName: b.name,
-        category: c as FixedCostCategory,
-        amount: Number(src?.amount ?? 0) || 0,
-        carried: !saved && !!prior,
-      };
-    })
-  );
-
-  // Holy Bistro has no branch row, so its rent and electricity live in their
-  // own table. Same rule as the branches: rent carries over from the latest
-  // earlier month, electricity starts blank.
-  const bistroSaved = new Map(((bistroThis ?? []) as any[]).map((r) => [r.category as string, r]));
-  const bistroPriorByCat = new Map<string, any>();
-  for (const r of (bistroPrior ?? []) as any[]) {
-    if (!bistroPriorByCat.has(r.category)) bistroPriorByCat.set(r.category, r);
-  }
-  const bistroCosts: BistroCostInput[] = BISTRO_COST_CATEGORIES.map((c) => {
-    const saved = bistroSaved.get(c);
-    const prior = CARRIES_FORWARD[c] ? bistroPriorByCat.get(c) : null;
-    const src = saved ?? prior;
-    return { category: c, amount: Number(src?.amount ?? 0) || 0, carried: !saved && !!prior };
-  });
-
-  const report = buildMonthReport({
-    month,
-    branches: (branches ?? []).map((b) => ({ id: b.id, name: b.name, slug: b.slug })),
-    sales: (sales ?? []) as any[],
-    expenses: (expenses ?? []) as any[],
-    payroll,
-    fixedCosts,
-    bistroCosts,
-  });
+  const { report, branches, carriedFrom, noteBody } = await loadMonthReport(month);
 
   const cols = [...report.branches, null]; // null = the Combined column
   const th = "text-right py-2 px-2.5 font-semibold";
@@ -517,7 +372,7 @@ export default async function ReportPage({
         {/* ------------------------------------------------- note ------- */}
         <h3 className="font-display text-[15px] font-semibold mt-7 mb-2.5">Notes for this month</h3>
         <div className="card">
-          <MonthNote month={month} initial={(note as any)?.body ?? ""} />
+          <MonthNote month={month} initial={noteBody} />
         </div>
       </div>
     </>

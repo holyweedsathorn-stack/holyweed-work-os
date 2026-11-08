@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { monthLabel } from "@/lib/report";
 
+/** "page": the report page as shown (Download PDF). "document": the complete report document (Save PDF). */
+type PdfKind = "page" | "document";
+
 export function MonthPicker({ month, options }: { month: string; options: string[] }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -18,7 +21,7 @@ export function MonthPicker({ month, options }: { month: string; options: string
   const isReport = pathname === "/report";
   const [pdf, setPdf] = useState<
     | { state: "idle" }
-    | { state: "working" }
+    | { state: "working"; kind: PdfKind }
     | { state: "ready"; url: string; file: File }
     | { state: "error"; message: string }
   >({ state: "idle" });
@@ -36,10 +39,11 @@ export function MonthPicker({ month, options }: { month: string; options: string
     setPdf({ state: "idle" });
   }, [month]);
 
-  async function downloadPdf() {
-    setPdf({ state: "working" });
+  async function downloadPdf(kind: PdfKind = "page") {
+    setPdf({ state: "working", kind });
     try {
-      const res = await fetch(`/api/report-pdf?month=${encodeURIComponent(month)}`, {
+      const layout = kind === "document" ? "&layout=document" : "";
+      const res = await fetch(`/api/report-pdf?month=${encodeURIComponent(month)}${layout}`, {
         credentials: "same-origin",
       });
       if (!res.ok) {
@@ -56,7 +60,7 @@ export function MonthPicker({ month, options }: { month: string; options: string
         throw new Error("You are not signed in. Sign in again and retry.");
       }
       const blob = await res.blob();
-      const filename = `Holyweed-report-${month}.pdf`;
+      const filename = kind === "document" ? `Holyweed-monthly-report-${month}.pdf` : `Holyweed-report-${month}.pdf`;
       const file = new File([blob], filename, { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
 
@@ -143,13 +147,25 @@ export function MonthPicker({ month, options }: { month: string; options: string
 
         <div className="ml-auto flex items-center gap-2">
           {isReport && (
+            // The complete report as a clean document: salary, rent & bills (incl. Holy Bistro), every
+            // carried-over figure and the full notes, laid out like the monthly report the owner files.
             <button
-              onClick={downloadPdf}
+              onClick={() => downloadPdf("document")}
+              disabled={pdf.state === "working"}
+              className="rounded-[9px] px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+              style={{ background: "var(--accent)", color: "#fff" }}
+            >
+              {pdf.state === "working" && pdf.kind === "document" ? "Making PDF…" : "Save PDF"}
+            </button>
+          )}
+          {isReport && (
+            <button
+              onClick={() => downloadPdf("page")}
               disabled={pdf.state === "working"}
               className="rounded-[9px] px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
               style={{ background: "var(--ink)", color: "var(--bg)" }}
             >
-              {pdf.state === "working" ? "Making PDF…" : "Download PDF"}
+              {pdf.state === "working" && pdf.kind === "page" ? "Making PDF…" : "Download PDF"}
             </button>
           )}
           <button
