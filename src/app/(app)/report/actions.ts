@@ -104,6 +104,39 @@ export async function saveFixedCosts(
   return { ok: true };
 }
 
+export type BistroCostEntry = { category: "rent" | "electricity"; amount: number };
+
+const BISTRO_CATEGORIES = new Set(["rent", "electricity"]);
+
+/** Record Holy Bistro's rent and electricity for one month. Replaces what's there. */
+export async function saveBistroCosts(month: string, entries: BistroCostEntry[]): Promise<Result> {
+  const guard = await requireManager("report.saveBistroCosts", "Only owners and managers can see payroll.");
+  if (!guard.ok) return guard;
+  if (!MONTH.test(month)) return { ok: false, error: "That isn't a valid month." };
+
+  const rows = entries
+    .filter((e) => BISTRO_CATEGORIES.has(e.category))
+    .map((e) => ({
+      org_id: guard.orgId,
+      month,
+      category: e.category,
+      amount: money(e.amount),
+      updated_at: new Date().toISOString(),
+    }));
+
+  if (rows.length === 0) return { ok: false, error: "Nothing to save." };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("bistro_monthly_costs")
+    .upsert(rows, { onConflict: "org_id,month,category" });
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/report");
+  return { ok: true };
+}
+
 /** A line or two of context for the month, shown on the report. */
 export async function saveMonthNote(month: string, body: string): Promise<Result> {
   const guard = await requireManager("report.saveMonthNote", "Only owners and managers can see payroll.");

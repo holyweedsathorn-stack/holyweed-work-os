@@ -87,6 +87,17 @@ export type FixedCostInput = {
   carried: boolean;
 };
 
+/** Holy Bistro's own rent and electricity (it has no branch of its own). */
+export const BISTRO_COST_CATEGORIES = ["rent", "electricity"] as const;
+export type BistroCostCategory = (typeof BISTRO_COST_CATEGORIES)[number];
+
+export type BistroCostInput = {
+  category: BistroCostCategory;
+  amount: number;
+  /** Brought over from an earlier month rather than saved for this one. */
+  carried: boolean;
+};
+
 export type MonthReport = {
   month: string;
   monthLabel: string;
@@ -108,6 +119,10 @@ export type MonthReport = {
   fixedCosts: FixedCostInput[];
   fixedCostsByBranch: { branchId: string; branchName: string; total: number }[];
   fixedCostsTotal: number;
+  /** Holy Bistro rent and electricity, entered alongside the branches' fixed costs. */
+  bistroCosts: { rent: number; electricity: number };
+  bistroCostsLines: BistroCostInput[];
+  bistroCostsTotal: number;
   operatingTotal: number;
   netProfit: number;
   cashBank: CashBank;
@@ -231,6 +246,7 @@ export function buildMonthReport(opts: {
   expenses: ExpenseRow[];
   payroll: PayrollInput[];
   fixedCosts?: FixedCostInput[];
+  bistroCosts?: BistroCostInput[];
   today?: string;
 }): MonthReport {
   const { month, branches, sales, expenses, payroll } = opts;
@@ -352,7 +368,14 @@ export function buildMonthReport(opts: {
   );
   const fixedCostsTotal = fixedCosts.reduce((s, f) => s + f.amount, 0);
 
-  const operatingTotal = payrollTotal + shopExpensesTotal + fixedCostsTotal;
+  const bistroCostsLines = opts.bistroCosts ?? [];
+  const bistroCosts = { rent: 0, electricity: 0 };
+  for (const c of bistroCostsLines) {
+    if (c.category in bistroCosts) bistroCosts[c.category] += n(c.amount);
+  }
+  const bistroCostsTotal = bistroCosts.rent + bistroCosts.electricity;
+
+  const operatingTotal = payrollTotal + shopExpensesTotal + fixedCostsTotal + bistroCostsTotal;
 
   // ------------------------------------------------------- cash & bank
   // Shop expenses and the whole team's salary & incentives are paid straight
@@ -360,8 +383,9 @@ export function buildMonthReport(opts: {
   // to deposit.
   const cashPaidOut = shopExpensesTotal + payrollTotal;
   const cashToDeposit = combined.cash - cashPaidOut;
-  // Rent and utilities are paid straight from the company bank account.
-  const bankPaidOut = fixedCostsTotal;
+  // Rent and utilities -- the branches' and Holy Bistro's -- are paid
+  // straight from the company bank account.
+  const bankPaidOut = fixedCostsTotal + bistroCostsTotal;
   const bankNetThisMonth = combined.electronic - bankPaidOut;
 
   const cashBank: CashBank = {
@@ -395,6 +419,9 @@ export function buildMonthReport(opts: {
     fixedCosts,
     fixedCostsByBranch,
     fixedCostsTotal,
+    bistroCosts,
+    bistroCostsLines,
+    bistroCostsTotal,
     operatingTotal,
     netProfit: combined.grossProfit - operatingTotal,
     cashBank,

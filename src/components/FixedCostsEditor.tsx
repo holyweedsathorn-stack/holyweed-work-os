@@ -2,20 +2,29 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { saveFixedCosts } from "@/app/(app)/report/actions";
+import { saveBistroCosts, saveFixedCosts } from "@/app/(app)/report/actions";
 import { fmtTHB } from "@/lib/types";
 import {
   FIXED_COST_CATEGORIES,
   FIXED_COST_LABEL,
   CARRIES_FORWARD,
+  BISTRO_COST_CATEGORIES,
+  type BistroCostCategory,
+  type BistroCostInput,
   type FixedCostCategory,
   type FixedCostInput,
 } from "@/lib/report";
 
+// Holy Bistro has no branch row; its column only has Rent and Electricity.
+const BISTRO = "bistro";
+const isBistroCategory = (c: string): c is BistroCostCategory =>
+  (BISTRO_COST_CATEGORIES as readonly string[]).includes(c);
+
 type BranchCol = { id: string; name: string };
 
 /**
- * Rent and utilities, one column per shop. Rent and internet arrive already
+ * Rent and utilities, one column per shop, plus Holy Bistro (rent and
+ * electricity only). Rent and internet arrive already
  * filled from last month because they're contracts; the metered bills start
  * empty so last month's figure can't be saved by mistake.
  */
@@ -24,11 +33,13 @@ export function FixedCostsEditor({
   monthLabel,
   branches,
   lines,
+  bistroLines,
 }: {
   month: string;
   monthLabel: string;
   branches: BranchCol[];
   lines: FixedCostInput[];
+  bistroLines: BistroCostInput[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -45,12 +56,17 @@ export function FixedCostsEditor({
         v[key(b.id, c)] = found && found.amount ? String(found.amount) : "";
       }
     }
+    for (const c of BISTRO_COST_CATEGORIES) {
+      const found = bistroLines.find((l) => l.category === c);
+      v[key(BISTRO, c)] = found && found.amount ? String(found.amount) : "";
+    }
     return v;
   });
 
-  const carried = new Set(
-    lines.filter((l) => l.carried && l.amount).map((l) => key(l.branchId, l.category))
-  );
+  const carried = new Set([
+    ...lines.filter((l) => l.carried && l.amount).map((l) => key(l.branchId, l.category)),
+    ...bistroLines.filter((l) => l.carried && l.amount).map((l) => key(BISTRO, l.category)),
+  ]);
 
   const num = (s: string) => {
     const n = Number((s ?? "").replace(/[,\s฿]/g, ""));
@@ -59,7 +75,8 @@ export function FixedCostsEditor({
 
   const branchTotal = (b: BranchCol) =>
     FIXED_COST_CATEGORIES.reduce((s, c) => s + num(values[key(b.id, c)]), 0);
-  const grandTotal = branches.reduce((s, b) => s + branchTotal(b), 0);
+  const bistroTotal = BISTRO_COST_CATEGORIES.reduce((s, c) => s + num(values[key(BISTRO, c)]), 0);
+  const grandTotal = branches.reduce((s, b) => s + branchTotal(b), 0) + bistroTotal;
 
   function submit() {
     setError(null);
@@ -70,9 +87,21 @@ export function FixedCostsEditor({
         amount: num(values[key(b.id, c)]),
       }))
     );
+    const bistroEntries = BISTRO_COST_CATEGORIES.map((c) => ({
+      category: c,
+      amount: num(values[key(BISTRO, c)]),
+    }));
     start(async () => {
       try {
-        const res = await saveFixedCosts(month, entries);
+        const [fixed, bistro] = await Promise.all([
+          saveFixedCosts(month, entries),
+          saveBistroCosts(month, bistroEntries),
+        ]);
+        const res = !fixed.ok
+          ? fixed
+          : !bistro.ok
+            ? { ok: false as const, error: `Holy Bistro: ${bistro.error}` }
+            : fixed;
         if (res.ok) {
           setSaved(true);
           router.refresh();
@@ -108,17 +137,21 @@ export function FixedCostsEditor({
                   {b.name}
                 </th>
               ))}
+              <th className="text-right py-2 px-2.5 font-semibold">Holy Bistro</th>
               <th
                 className="text-right py-2 px-2.5 font-semibold"
                 style={{ background: "var(--surface-2)" }}
               >
-                Both
+                Total
               </th>
             </tr>
           </thead>
           <tbody>
             {FIXED_COST_CATEGORIES.map((c) => {
-              const rowTotal = branches.reduce((s, b) => s + num(values[key(b.id, c)]), 0);
+              const rowTotal =
+                branches.reduce((s, b) => s + num(values[key(b.id, c)]), 0) +
+                (isBistroCategory(c) ? num(values[key(BISTRO, c)]) : 0);
+              const bk = key(BISTRO, c);
               return (
                 <tr key={c} style={{ borderTop: "1px solid var(--line)" }}>
                   <td className={cell}>
@@ -149,6 +182,30 @@ export function FixedCostsEditor({
                       </td>
                     );
                   })}
+                  <td className={`${cell} text-right`} style={{ width: 150 }}>
+                    {isBistroCategory(c) ? (
+                      <>
+                        <input
+                          className={`${input} no-print`}
+                          style={{
+                            ...inputStyle,
+                            borderColor: carried.has(bk) ? "var(--warning)" : "var(--line-strong)",
+                          }}
+                          inputMode="decimal"
+                          placeholder="0"
+                          aria-label={`Holy Bistro ${FIXED_COST_LABEL[c].toLowerCase()}`}
+                          value={values[bk] ?? ""}
+                          onChange={(e) => {
+                            setSaved(false);
+                            setValues((v) => ({ ...v, [bk]: e.target.value }));
+                          }}
+                        />
+                        <span className="num print-only">{fmtTHB(num(values[bk]))}</span>
+                      </>
+                    ) : (
+                      <span className="text-inkMuted">—</span>
+                    )}
+                  </td>
                   <td
                     className={`${cell} text-right num font-semibold`}
                     style={{ background: "var(--surface-2)" }}
@@ -167,6 +224,7 @@ export function FixedCostsEditor({
                   {fmtTHB(branchTotal(b))}
                 </td>
               ))}
+              <td className={`${cell} text-right num`}>{fmtTHB(bistroTotal)}</td>
               <td
                 className={`${cell} text-right num`}
                 style={{ background: "var(--surface-2)" }}
