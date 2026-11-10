@@ -3,6 +3,7 @@ import { Topbar } from "@/components/Topbar";
 import { fmtTHB, initials } from "@/lib/types";
 import { listCurrencyTransactions } from "./actions";
 import { DeleteTransactionButton } from "@/components/DeleteTransactionButton";
+import { fmtDateTime } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
@@ -173,13 +174,7 @@ export default async function CurrencyLogPage({
                         {fmtTHB(t.totalThb)}
                       </td>
                       <td className="py-2.5 text-[11.5px] text-right text-inkMuted" style={{ borderTop: "1px solid var(--line)" }}>
-                        {new Date(t.createdAt).toLocaleString("en-GB", {
-                          day: "2-digit",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          timeZone: "Asia/Bangkok",
-                        })}
+                        {fmtDateTime(t.createdAt)}
                       </td>
                       <td className="py-2.5 text-right" style={{ borderTop: "1px solid var(--line)" }}>
                         <DeleteTransactionButton

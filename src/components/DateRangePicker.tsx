@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { DateInput } from "@/components/DateInput";
 
 export type Preset = { id: string; label: string };
 
@@ -96,20 +97,18 @@ export function DateRangePicker({
         >
           <label className="text-[12px] font-semibold text-inkSecondary">
             From
-            <input
-              type="date"
+            <DateInput
               value={f}
-              onChange={(e) => setF(e.target.value)}
+              onChange={setF}
               className="mt-1 block rounded-[9px] border px-3 py-2 text-[13.5px] outline-none focus:border-accent"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)" }}
             />
           </label>
           <label className="text-[12px] font-semibold text-inkSecondary">
             To
-            <input
-              type="date"
+            <DateInput
               value={t}
-              onChange={(e) => setT(e.target.value)}
+              onChange={setT}
               className="mt-1 block rounded-[9px] border px-3 py-2 text-[13.5px] outline-none focus:border-accent"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)" }}
             />

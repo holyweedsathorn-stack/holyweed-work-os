@@ -7,6 +7,7 @@ import { resolveRange, daysBetween, CATEGORY_LABEL } from "@/lib/range";
 import { fmtTHB, addDays, type Branch } from "@/lib/types";
 import { pickNonOverlappingWindows, skippedNote, type Window } from "@/lib/windows";
 import { LiveSalesStrip } from "@/components/LiveSalesStrip";
+import { fmtDate as fmtDdMmYyyy } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
@@ -175,12 +176,7 @@ export default async function ShopPage({
 
   // --------------------------------------------------------------- charts
   const dates = [...bySlugDate.keys()].sort();
-  const fmtDate = (iso: string) =>
-    new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC",
-    });
+  const fmtDate = (iso: string) => fmtDdMmYyyy(iso);
 
   const branchSeries = (slug: "sathorn" | "sukhumvit", label: string) => ({
     key: slug,

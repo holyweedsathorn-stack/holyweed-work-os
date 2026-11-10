@@ -1,5 +1,6 @@
 import { fmtTimeBKK, initials } from "@/lib/types";
 import { listMyBranchCurrencyTransactions } from "@/app/clock/currency-actions";
+import { fmtWeekdayDate } from "@/lib/dates";
 
 /** Group key: the entry's calendar date in Bangkok, YYYY-MM-DD. */
 function dateKeyBKK(iso: string): string {
@@ -7,12 +8,7 @@ function dateKeyBKK(iso: string): string {
 }
 
 function dateHeaderBKK(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    timeZone: "Asia/Bangkok",
-  });
+  return fmtWeekdayDate(iso, true);
 }
 
 /**

@@ -19,6 +19,8 @@ import {
   type RoomType,
 } from "@/app/clock/hostel-actions";
 import { deleteHostelStay } from "@/app/(app)/hostel/actions";
+import { fmtDate } from "@/lib/dates";
+import { DateInput } from "@/components/DateInput";
 
 const BOOKING_LABELS: Record<BookingSource, string> = {
   booking_com: "Booking.com",
@@ -64,7 +66,7 @@ export type StayLike = {
 };
 
 function fmtShortDate(d: string): string {
-  return new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  return fmtDate(d);
 }
 
 /**
@@ -306,10 +308,7 @@ export function HostelStayRow({
             <div className="text-[11px] text-inkMuted flex items-center gap-2 mt-0.5">
               <span>
                 {stay.expectedCheckoutDate
-                  ? `Expected out: ${new Date(stay.expectedCheckoutDate + "T00:00:00").toLocaleDateString("en-GB", {
-                      day: "2-digit",
-                      month: "short",
-                    })}`
+                  ? `Expected out: ${fmtDate(stay.expectedCheckoutDate)}`
                   : "No expected check-out date"}
               </span>
               <button
@@ -330,10 +329,9 @@ export function HostelStayRow({
 
           {editingCheckout && (
             <div className="mt-1.5 flex flex-col gap-1.5">
-              <input
-                type="date"
+              <DateInput
                 value={checkoutDraft}
-                onChange={(e) => setCheckoutDraft(e.target.value)}
+                onChange={setCheckoutDraft}
                 className="rounded-[8px] border px-2 py-1 text-[12px] outline-none focus:border-accent w-fit"
                 style={{ borderColor: "var(--line-strong)", background: "var(--surface)" }}
               />

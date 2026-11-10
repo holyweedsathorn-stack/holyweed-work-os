@@ -1,3 +1,4 @@
+import { fmtDate } from "./dates";
 export type Branch = {
   id: string;
   org_id: string;
@@ -133,11 +134,7 @@ export function fmtTimeBKK(iso: string) {
 }
 
 export function fmtDateBKK(iso: string) {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    timeZone: "Asia/Bangkok",
-  });
+  return fmtDate(iso);
 }
 
 export const BRANCH_COLOR: Record<string, string> = {

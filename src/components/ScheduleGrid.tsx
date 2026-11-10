@@ -12,6 +12,7 @@ import {
   type ShiftRequirement,
   type ShiftType,
 } from "@/lib/shifts";
+import { fmtWeekdayDate } from "@/lib/dates";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -243,12 +244,7 @@ export function ScheduleGrid({
             <div className="mb-3">
               <b className="text-[15px] font-semibold block">{pickedEmp.full_name}</b>
               <span className="text-[12.5px] text-inkMuted">
-                {new Date(picking.date + "T00:00:00Z").toLocaleDateString("en-GB", {
-                  weekday: "long",
-                  day: "numeric",
-                  month: "short",
-                  timeZone: "UTC",
-                })}
+                {fmtWeekdayDate(picking.date, true)}
               </span>
             </div>
 

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { recordBistroSales } from "@/app/clock/bistro-sales-actions";
+import { DateInput } from "@/components/DateInput";
 
 function bangkokToday() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
@@ -138,10 +139,9 @@ export function BistroSalesForm() {
         <div className="flex flex-col gap-3">
           <label className="text-[12px] font-semibold text-inkSecondary block">
             Date
-            <input
-              type="date"
+            <DateInput
               value={saleDate}
-              onChange={(e) => setSaleDate(e.target.value)}
+              onChange={setSaleDate}
               max={bangkokToday()}
               className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { checkInGuest, type BookingSource, type PaymentMethod } from "@/app/clock/hostel-actions";
 import { HOSTEL_ROOMS, findHostelRoom } from "@/lib/hostel-rooms";
 import { compressImage } from "@/lib/compress-image";
+import { DateInput } from "@/components/DateInput";
 
 const BOOKING_SOURCES: { id: BookingSource; label: string }[] = [
   { id: "booking_com", label: "Booking.com" },
@@ -335,9 +336,8 @@ export function HostelCheckinForm({
 
           <label className="text-[12px] font-semibold text-inkSecondary block">
             Expected check-out date (optional)
-            <input
+            <DateInput
               name="expected_checkout_date"
-              type="date"
               defaultValue={prefill?.expectedCheckoutDate}
               className="w-full rounded-[9px] border px-3 text-[14px] outline-none focus:border-accent mt-1.5"
               style={{ borderColor: "var(--line-strong)", background: "var(--surface)", minHeight: 46 }}

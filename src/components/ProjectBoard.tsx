@@ -10,6 +10,8 @@ import {
   deleteAllProjects,
 } from "@/app/(app)/projects/actions";
 import { initials, type Branch, type Employee } from "@/lib/types";
+import { fmtDate } from "@/lib/dates";
+import { DateInput } from "@/components/DateInput";
 
 export type BoardProject = {
   id: string;
@@ -131,8 +133,7 @@ function ProjectForm({
           </Field>
 
           <Field label="Due date">
-            <input
-              type="date"
+            <DateInput
               name="due_date"
               defaultValue={project?.due_date ?? ""}
               className={inputClass}
@@ -379,11 +380,7 @@ export function ProjectBoard({
                             }}
                           >
                             {overdue ? "overdue · " : ""}
-                            {new Date(p.due_date + "T00:00:00Z").toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              timeZone: "UTC",
-                            })}
+                            {fmtDate(p.due_date)}
                           </span>
                         )}
                       </div>
